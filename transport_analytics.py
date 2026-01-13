@@ -23,10 +23,33 @@ def load_data(train_file, bike_file, rebalancing_file, weather_file):
     # 1. TRAINS
     print(f"Reading Trains...")
     trains = pd.read_excel(train_file)
+
+    # Clean headers (lowercase, strip spaces)
     trains.columns = [c.lower().strip() for c in trains.columns]
+
+    # --- MAPPING: UPDATE THIS DICTIONARY ---
+    # Left side: What the CODE needs. Right side: What YOUR FILE has.
+    # Example: If your file has 'skutecny_prijezd', put that on the right.
+    column_map = {
+        'actual_arrival': 'skutecny_prijezd',  # <--- Change this to your column name
+        'actual_departure': 'skutecny_odjezd',  # <--- Change this to your column name
+        'train_type': 'druh_vlaku',  # <--- Change this to your column name
+        'station': 'nazev_stanice'  # <--- Change this to your column name
+    }
+
+    # Apply the renaming
+    # We invert the map so pandas can rename: { 'your_name': 'standard_name' }
+    rename_dict = {v: k for k, v in column_map.items()}
+    trains = trains.rename(columns=rename_dict)
+
+    # Now the rest of the code works safely
     for col in ['actual_arrival', 'actual_departure']:
         if col in trains.columns:
             trains[col] = pd.to_datetime(trains[col], errors='coerce')
+        else:
+            print(f"WARNING: Column '{col}' missing! Check your Excel headers.")
+
+    # ... rest of the function ...
 
     # 2. BIKES (Movement Sheet)
     print(f"Reading Bike Movements...")
