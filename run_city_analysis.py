@@ -28,17 +28,15 @@ NETWORKS = {
         'bike_stations': ['SV-Svinov nádraží *(navíc 15min na odjezd)'],
         'params': {
             'weights': {
-                'Os': 2.0,
-                'Sp': 1.5,
-                'R': 1.5,
-                'Ex': 1
+                'Os': 2.0, 'Sp': 1.5, 'R': 1.5, 'Ex': 1
             },
-            'peak_arr_reg': 2,
-            'pulse_arr_reg': 12,
-            'peak_arr_ld': 10,
-            'pulse_arr_ld': 35,
-            'rush_am': 2.0,
-            'rush_pm': 2.0
+            'peak_arr_reg': 2, 'pulse_arr_reg': 12,
+            'peak_arr_ld': 10, 'pulse_arr_ld': 35,
+
+            'peak_dep_reg': 10, 'pulse_dep_reg': 25,
+            'peak_dep_ld': 20, 'pulse_dep_ld': 45,
+
+            'rush_am': 2.0, 'rush_pm': 2.0
         },
         'vis_start': '2025-09-15 00:00',
         'vis_end': '2025-10-19 23:59'
@@ -52,20 +50,17 @@ NETWORKS = {
         'sheet_rebal': 'Ostrava',
         'train_station': 'Ostrava-Svinov',
         'bike_stations': ['MOAP-Hlavní nádraží'],
-        'params': {
+                'params': {
             'weights': {
-                'Os': 2.0,
-                'Sp': 2.0,
-                'R': 2.5,
-                'IC': 3.0,
-                'rj': 3.5
+                'Os': 2.0, 'Sp': 1.5, 'R': 1.5, 'Ex': 1
             },
-            'peak_arr_reg': 6,
-            'pulse_arr_reg': 20,
-            'peak_arr_ld': 10,
-            'pulse_arr_ld': 35,
-            'rush_am': 2.0,
-            'rush_pm': 2.0
+            'peak_arr_reg': 2, 'pulse_arr_reg': 12,
+            'peak_arr_ld': 10, 'pulse_arr_ld': 35,
+
+            'peak_dep_reg': 10, 'pulse_dep_reg': 25,
+            'peak_dep_ld': 20, 'pulse_dep_ld': 45,
+
+            'rush_am': 2.0, 'rush_pm': 2.0
         },
         'vis_start': '2025-09-15 00:00',
         'vis_end': '2025-10-19 23:59'
@@ -83,20 +78,17 @@ NETWORKS = {
             'Hlavní nádraží - pošta',
             'Bajkazyl 666'
         ],
-                'params': {
+        'params': {
             'weights': {
-                'Os': 2.0,
-                'Sp': 2.0,
-                'R': 2.5,
-                'IC': 3.0,
-                'rj': 3.5
+                'Os': 2.0, 'Sp': 1.5, 'R': 1.5, 'Ex': 1
             },
-            'peak_arr_reg': 6,
-            'pulse_arr_reg': 20,
-            'peak_arr_ld': 10,
-            'pulse_arr_ld': 35,
-            'rush_am': 2.0,
-            'rush_pm': 2.0
+            'peak_arr_reg': 2, 'pulse_arr_reg': 12,
+            'peak_arr_ld': 10, 'pulse_arr_ld': 35,
+
+            'peak_dep_reg': 10, 'pulse_dep_reg': 25,
+            'peak_dep_ld': 20, 'pulse_dep_ld': 45,
+
+            'rush_am': 2.0, 'rush_pm': 2.0
         },
         'vis_start': '2025-09-15 00:00',
         'vis_end': '2025-10-19 23:59'
@@ -109,20 +101,17 @@ NETWORKS = {
         'sheet_rebal': 'Prerov',  # Verify if this is correct sheet name!
         'train_station': 'Přerov os.n.',
         'bike_stations': ['Nádraží'],
-        'params': {
+                'params': {
             'weights': {
-                'Os': 2.0,
-                'Sp': 2.0,
-                'R': 2.5,
-                'IC': 3.0,
-                'rj': 3.5
+                'Os': 2.0, 'Sp': 1.5, 'R': 1.5, 'Ex': 1
             },
-            'peak_arr_reg': 6,
-            'pulse_arr_reg': 20,
-            'peak_arr_ld': 10,
-            'pulse_arr_ld': 35,
-            'rush_am': 2.0,
-            'rush_pm': 2.0
+            'peak_arr_reg': 2, 'pulse_arr_reg': 12,
+            'peak_arr_ld': 10, 'pulse_arr_ld': 35,
+
+            'peak_dep_reg': 10, 'pulse_dep_reg': 25,
+            'peak_dep_ld': 20, 'pulse_dep_ld': 45,
+
+            'rush_am': 2.0, 'rush_pm': 2.0
         },
         'vis_start': '2025-09-15 00:00',
         'vis_end': '2025-10-19 23:59'
@@ -137,18 +126,15 @@ NETWORKS = {
         'bike_stations': ['Vlakové nádraží Valašské Meziříčí (nové umístění)'],
         'params': {
             'weights': {
-                'Os': 2.0,
-                'Sp': 2.0,
-                'R': 2.5,
-                'IC': 3.0,
-                'rj': 3.5
+                'Os': 2.0, 'Sp': 1.5, 'R': 1.5, 'Ex': 1
             },
-            'peak_arr_reg': 6,
-            'pulse_arr_reg': 20,
-            'peak_arr_ld': 10,
-            'pulse_arr_ld': 35,
-            'rush_am': 2.0,
-            'rush_pm': 2.0
+            'peak_arr_reg': 2, 'pulse_arr_reg': 12,
+            'peak_arr_ld': 10, 'pulse_arr_ld': 35,
+
+            'peak_dep_reg': 10, 'pulse_dep_reg': 25,
+            'peak_dep_ld': 20, 'pulse_dep_ld': 45,
+
+            'rush_am': 2.0, 'rush_pm': 2.0
         },
         'vis_start': '2025-09-15 00:00',
         'vis_end': '2025-10-19 23:59'
