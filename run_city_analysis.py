@@ -18,7 +18,7 @@ RESULTS_DIR = 'results'
 # 2. CITY NETWORK MAP
 # ==========================================
 NETWORKS = {
-    'Ostrava_Svinov': {
+    'Ostrava-Svinov': {
         'file_trains': 'data/Pohyby_Svinov.xlsx',
         'file_weather': 'data/Ostrava_pocasi.xlsx',
         'sheet_rentals': 'Vypujcky_Ostrava',
@@ -27,14 +27,51 @@ NETWORKS = {
         'train_station': 'Ostrava-Svinov',
         'bike_stations': ['SV-Svinov nádraží *(navíc 15min na odjezd)'],
         'params': {
-            'pulse_arr': 25, 'pulse_dep': 40,
-            'peak_arr': 4, 'peak_dep': 12,
-            'rush_am': 1.8, 'rush_pm': 1.8
+            'weights': {
+                'Os': 2.0,
+                'Sp': 1.5,
+                'R': 1.5,
+                'Ex': 1
+            },
+            'peak_arr_reg': 2,
+            'pulse_arr_reg': 12,
+            'peak_arr_ld': 10,
+            'pulse_arr_ld': 35,
+            'rush_am': 2.0,
+            'rush_pm': 2.0
         },
         'vis_start': '2025-09-15 00:00',
         'vis_end': '2025-10-19 23:59'
     },
-    'Brno_Main': {
+
+    'Ostrava hl.n.': {
+        'file_trains': 'data/Pohyby_Svinov.xlsx',
+        'file_weather': 'data/Ostrava_pocasi.xlsx',
+        'sheet_rentals': 'Vypujcky_Ostrava',
+        'sheet_logs': 'Stanice_Ostrava',
+        'sheet_rebal': 'Ostrava',
+        'train_station': 'Ostrava-Svinov',
+        'bike_stations': ['MOAP-Hlavní nádraží'],
+        'params': {
+            'weights': {
+                'Os': 2.0,
+                'Sp': 2.0,
+                'R': 2.5,
+                'IC': 3.0,
+                'rj': 3.5
+            },
+            'peak_arr_reg': 6,
+            'pulse_arr_reg': 20,
+            'peak_arr_ld': 10,
+            'pulse_arr_ld': 35,
+            'rush_am': 2.0,
+            'rush_pm': 2.0
+        },
+        'vis_start': '2025-09-15 00:00',
+        'vis_end': '2025-10-19 23:59'
+    },
+
+    'Brno hl.n.': {
         'file_trains': 'data/Pohyby_Brno.xlsx',
         'file_weather': 'data/Brno_pocasi.xlsx',
         'sheet_rentals': 'Vypujcky_Brno',
@@ -46,15 +83,25 @@ NETWORKS = {
             'Hlavní nádraží - pošta',
             'Bajkazyl 666'
         ],
-        'params': {
-            'pulse_arr': 45, 'pulse_dep': 60,
-            'peak_arr': 10, 'peak_dep': 20,
-            'rush_am': 2.0, 'rush_pm': 2.0
+                'params': {
+            'weights': {
+                'Os': 2.0,
+                'Sp': 2.0,
+                'R': 2.5,
+                'IC': 3.0,
+                'rj': 3.5
+            },
+            'peak_arr_reg': 6,
+            'pulse_arr_reg': 20,
+            'peak_arr_ld': 10,
+            'pulse_arr_ld': 35,
+            'rush_am': 2.0,
+            'rush_pm': 2.0
         },
         'vis_start': '2025-09-15 00:00',
         'vis_end': '2025-10-19 23:59'
     },
-    'Prerov': {
+    'Přerov': {
         'file_trains': 'data/Pohyby_Prerov.xlsx',
         'file_weather': 'data/Prerov_pocasi.xlsx',
         'sheet_rentals': 'Vypujcky_Prerov',
@@ -63,14 +110,24 @@ NETWORKS = {
         'train_station': 'Přerov os.n.',
         'bike_stations': ['Nádraží'],
         'params': {
-            'pulse_arr': 15, 'pulse_dep': 25,
-            'peak_arr': 2, 'peak_dep': 10,
-            'rush_am': 1.2, 'rush_pm': 1.2
+            'weights': {
+                'Os': 2.0,
+                'Sp': 2.0,
+                'R': 2.5,
+                'IC': 3.0,
+                'rj': 3.5
+            },
+            'peak_arr_reg': 6,
+            'pulse_arr_reg': 20,
+            'peak_arr_ld': 10,
+            'pulse_arr_ld': 35,
+            'rush_am': 2.0,
+            'rush_pm': 2.0
         },
         'vis_start': '2025-09-15 00:00',
         'vis_end': '2025-10-19 23:59'
     },
-    'ValMez': {
+    'Valašské Meziříčí': {
         'file_trains': 'data/Pohyby_ValMez.xlsx',
         'file_weather': 'data/ValMez_pocasi.xlsx',
         'sheet_rentals': 'Vypujcky_ValMez',
@@ -79,9 +136,19 @@ NETWORKS = {
         'train_station': 'Valašské Meziříčí',
         'bike_stations': ['Vlakové nádraží Valašské Meziříčí (nové umístění)'],
         'params': {
-            'pulse_arr': 15, 'pulse_dep': 25,
-            'peak_arr': 2, 'peak_dep': 10,
-            'rush_am': 1.2, 'rush_pm': 1.2
+            'weights': {
+                'Os': 2.0,
+                'Sp': 2.0,
+                'R': 2.5,
+                'IC': 3.0,
+                'rj': 3.5
+            },
+            'peak_arr_reg': 6,
+            'pulse_arr_reg': 20,
+            'peak_arr_ld': 10,
+            'pulse_arr_ld': 35,
+            'rush_am': 2.0,
+            'rush_pm': 2.0
         },
         'vis_start': '2025-09-15 00:00',
         'vis_end': '2025-10-19 23:59'
@@ -253,17 +320,25 @@ def main():
             print(f"  Warning: Log processing failed ({e}). Analysis will assume full availability.")
             df_logs = None
 
-        # 5. Load REBALANCING & Filter
-        try:
-            if os.path.exists(FILE_REBALANCING):
-                # Check if sheet exists in rebalancing file (optional safety)
-                # Just try reading it
-                df_rebal = pd.read_excel(FILE_REBALANCING, sheet_name=config['sheet_rebal'])
+            # 5. Load REBALANCING & Filter
+            try:
+                # Get the limit from config (Default to 2 minutes if missing)
+                min_limit = config.get('min_trip_minutes', 0.5)
+
                 initial_count = len(df_bikes)
-                df_bikes = df_bikes[(df_bikes['end_time'] - df_bikes['start_time']) > pd.Timedelta(minutes=2)]
-                print(f"  Filtered {initial_count - len(df_bikes)} rebalancing/service moves.")
-        except Exception as e:
-            print(f"  Warning: Rebalancing sheet not found or failed ({e}). Skipping filter.")
+
+                # Filter trips shorter than the limit
+                # Note: We do this REGARDLESS of whether rebalancing file exists
+                df_bikes = df_bikes[(df_bikes['end_time'] - df_bikes['start_time']) > pd.Timedelta(minutes=min_limit)]
+
+                print(f"  Filtered {initial_count - len(df_bikes)} short trips (< {min_limit} min).")
+
+                # Load rebalancing file (optional, just for logging/safety)
+                if os.path.exists(FILE_REBALANCING):
+                    df_rebal = pd.read_excel(FILE_REBALANCING, sheet_name=config['sheet_rebal'])
+
+            except Exception as e:
+                print(f"  Warning: Filter/Rebalancing failed ({e}).")
 
         # --- RUN ANALYSIS ---
         res = ta.analyze_city_data(city_key, config, df_trains, df_bikes, df_logs, df_weather, TRAIN_CATS)
