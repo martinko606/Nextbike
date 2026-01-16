@@ -73,41 +73,101 @@ def get_dynamic_kernels(p_arr, p_dep, peak_arr, peak_dep):
 
 
 def generate_signals(subset_trains, timeline, params):
-    dur_arr = params['pulse_arr']
-    dur_dep = params['pulse_dep']
-    boost_am = params['rush_am']
-    boost_pm = params['rush_pm']
-    peak_arr = params.get('peak_arr', 4)
-    peak_dep = params.get('peak_dep', 15)
+    """
+    Generates theoretical pressure signals with Station-Specific Weights and Timings.
+    """
+    # --- A. DEFAULTS (Fallback if not specified in config) ---
+    # Timing Defaults
+    def_p_arr = params.get('pulse_arr', 30)
+    def_p_dep = params.get('pulse_dep', 45)
+    def_peak_arr = params.get('peak_arr', 4)
+    def_peak_dep = params.get('peak_dep', 15)
 
+    # --- B. READ STATION-SPECIFIC TIMING ---
+    # 1. Regional (Standard)
+    dur_arr_reg = int(params.get('pulse_arr_reg', def_p_arr))
+    dur_dep_reg = int(params.get('pulse_dep_reg', def_p_dep))
+    peak_arr_reg = params.get('peak_arr_reg', def_peak_arr)
+    peak_dep_reg = params.get('peak_dep_reg', def_peak_dep)
+
+    # 2. Long Distance (Optional override)
+    # If not set, defaults to 1.5x Regional
+    dur_arr_ld = int(params.get('pulse_arr_ld', dur_arr_reg * 1.5))
+    dur_dep_ld = int(params.get('pulse_dep_ld', dur_dep_reg * 1.5))
+    peak_arr_ld = params.get('peak_arr_ld', peak_arr_reg + 5)
+    peak_dep_ld = params.get('peak_dep_ld', peak_dep_reg + 10)
+
+    # --- C. PRE-CALCULATE KERNELS ---
+    k_arr_reg, k_dep_reg = get_dynamic_kernels(dur_arr_reg, dur_dep_reg, peak_arr_reg, peak_dep_reg)
+    k_arr_ld, k_dep_ld = get_dynamic_kernels(dur_arr_ld, dur_dep_ld, peak_arr_ld, peak_dep_ld)
+
+    # --- D. READ STATION-SPECIFIC WEIGHTS ---
+    # This allows Brno to have different multipliers than Prerov
+    default_weights = {
+        'Os': 2.0, 'Sp': 1.5,
+        'R': 1, 'Ex': 1, 'Rx': 1,
+        'EC': 1, '?': 1.0
+    }
+    # MERGE: Start with defaults, overwrite with station specific weights
+    weights = default_weights.copy()
+    if 'weights' in params:
+        weights.update(params['weights'])
+
+    # Long Distance Types Trigger
+    ld_types = ['R', 'Ex', 'Rx', 'IC', 'EC', 'rj', 'SC', 'EN', 'NJ']
+
+    # --- E. INITIALIZE OUTPUT ---
     sig_arr = pd.Series(0.0, index=timeline)
     sig_dep = pd.Series(0.0, index=timeline)
-    k_arr, k_dep = get_dynamic_kernels(dur_arr, dur_dep, peak_arr, peak_dep)
 
+    boost_am = params.get('rush_am', 1.0)
+    boost_pm = params.get('rush_pm', 1.0)
+
+    # --- F. MAIN LOOP ---
     for _, t in subset_trains.iterrows():
+        # Get Train Properties
+        t_type = str(t.get('train_type', '?')).strip()
+
+        # 1. Get Weight (Intensity)
+        w = weights.get(t_type, 1.0)
+
+        # 2. Select Kernel (Timing)
+        is_ld = t_type in ld_types
+        if is_ld:
+            k_arr, dur_arr = k_arr_ld, dur_arr_ld
+            k_dep, dur_dep = k_dep_ld, dur_dep_ld
+        else:
+            k_arr, dur_arr = k_arr_reg, dur_arr_reg
+            k_dep, dur_dep = k_dep_reg, dur_dep_reg
+
+        # 3. Apply Signal (Arrival)
         if pd.notnull(t.get('actual_arrival')):
             try:
                 t_idx = sig_arr.index.get_loc(t['actual_arrival'].round('1min'))
-                boost = boost_am if (6 <= t['actual_arrival'].hour <= 9) else 1.0
+                time_boost = boost_am if (6 <= t['actual_arrival'].hour <= 9) else 1.0
+
                 end = min(t_idx + dur_arr, len(sig_arr))
                 L = end - t_idx
-                if L > 0: sig_arr.iloc[t_idx:end] += (k_arr[:L] * boost)
+                if L > 0:
+                    sig_arr.iloc[t_idx:end] += (k_arr[:L] * w * time_boost)
             except KeyError:
                 pass
 
+        # 4. Apply Signal (Departure)
         if pd.notnull(t.get('actual_departure')):
             try:
                 start_t = t['actual_departure'] - pd.Timedelta(minutes=dur_dep)
                 t_idx = sig_dep.index.get_loc(start_t.round('1min'))
-                boost = boost_pm if (14 <= t['actual_departure'].hour <= 18) else 1.0
+                time_boost = boost_pm if (14 <= t['actual_departure'].hour <= 18) else 1.0
+
                 end = min(t_idx + dur_dep, len(sig_dep))
                 L = end - t_idx
-                if L > 0: sig_dep.iloc[t_idx:end] += (k_dep[:L] * boost)
+                if L > 0:
+                    sig_dep.iloc[t_idx:end] += (k_dep[:L] * w * time_boost)
             except KeyError:
                 pass
 
     return sig_arr, sig_dep
-
 
 # ==========================================
 # 3. ANALYSIS RUNNER (LOGIC ONLY)
@@ -142,92 +202,108 @@ def analyze_city_data(city_name, config, df_trains, df_bikes, df_logs, df_weathe
         end_t = hub_trains['actual_arrival'].max().ceil('h')
         timeline = pd.date_range(start_t, end_t, freq='1min')
     except KeyError:
-        print("    [!] ABORTING: 'actual_arrival' column still missing. Check debug output above.")
+        print("    [!] ABORTING: 'actual_arrival' column still missing.")
         return []
 
-    # 5. ROBUST LOGS PROCESSING
-    hub_logs = pd.DataFrame()
+    # =========================================================
+    # 5. CALCULATE FLOWS (Rentals & Returns)
+    # =========================================================
+    # We need these immediately to calculate stock
+    ts_starts = starts.set_index('start_time').resample('1min').size().reindex(timeline, fill_value=0)
+    ts_ends = ends.set_index('end_time').resample('1min').size().reindex(timeline, fill_value=0)
+
+    # =========================================================
+    # 6. HYBRID STOCK CALCULATION (Rent Sheet + Log Correction)
+    # =========================================================
+    # A. Calculate Net Flow (Simulation)
+    net_flow = ts_ends - ts_starts
+    sim_stock = net_flow.cumsum()
+
+    # B. Load Logs (Ground Truth Checkpoints)
+    log_stock = pd.Series(np.nan, index=timeline)
+
     if df_logs is not None and not df_logs.empty:
         df_logs.columns = [str(c).lower().strip() for c in df_logs.columns]
-
-        # A. FIND TIMESTAMP
-        time_col = next(
-            (c for c in df_logs.columns if c in ['čas', 'cas', 'time', 'timestamp', 'date', 'interval_start']), None)
+        time_col = next((c for c in df_logs.columns if c in ['čas', 'cas', 'time', 'timestamp', 'date']), None)
 
         if time_col:
-            temp_logs = pd.DataFrame()
-            temp_logs['timestamp'] = pd.to_datetime(df_logs[time_col])
+            df_logs['timestamp'] = pd.to_datetime(df_logs[time_col])
 
-            # B. WIDE vs LONG Check
+            # Identify relevant log rows
             if 'place_name' in df_logs.columns:
                 target_rows = df_logs[df_logs['place_name'].isin(config['bike_stations'])]
-                cnt_col = next((c for c in df_logs.columns if c in ['bikes', 'count', 'pocet_kol', 'bikes_available']),
-                               None)
+                cnt_col = next((c for c in df_logs.columns if c in ['bikes', 'count', 'pocet_kol']), None)
                 if cnt_col:
-                    temp_logs['bikes'] = target_rows[cnt_col]
-                    hub_logs = temp_logs.dropna()
+                    temp = target_rows.set_index('timestamp')[cnt_col]
+                    # Map logs to timeline (duplicates handled by taking last value)
+                    log_stock.update(temp.groupby(level=0).last())
             else:
+                # Wide format fallback
                 found_cols = []
                 for target in config['bike_stations']:
                     match = next((col for col in df_logs.columns if target.lower() in col), None)
                     if match: found_cols.append(match)
-
                 if found_cols:
-                    temp_logs['bikes'] = df_logs[found_cols].fillna(0).sum(axis=1)
-                    hub_logs = temp_logs
+                    temp = df_logs.set_index('timestamp')[found_cols].fillna(0).sum(axis=1)
+                    log_stock.update(temp.groupby(level=0).last())
+
+    # C. Calculate Correction Offset
+    # Where we have a log, Offset = Log - Sim
+    offsets = log_stock - sim_stock
+
+    # Forward Fill Offset (Carry the correction forward until the next log)
+    # Backfill allows us to estimate stock before the first log
+    offsets = offsets.ffill().bfill().fillna(0)
+
+    # D. Final Hybrid Stock
+    final_stock = sim_stock + offsets
+
+    # E. Create Availability Mask
+    # Rule 1: Stock > 0
+    # Rule 2: Rental Occurred (Safety override: If rental happened, bike WAS there)
+    mask_available = (final_stock >= 1) | (ts_starts >= 1)
 
     # =========================================================
-    # 6. MASKS (Availability & Weather)
+    # 7. WEATHER STRATIFICATION
     # =========================================================
+    mask_good_weather = pd.Series(True, index=timeline)
+    mask_bad_weather = pd.Series(False, index=timeline)
 
-    # DEFAULT: Assume everything is OK (Safety fallback)
-    mask_available = pd.Series(True, index=timeline)
-    mask_good = pd.Series(True, index=timeline)
-    final_mask = pd.Series(True, index=timeline)  # <--- INITIALIZED HERE SO IT NEVER CRASHES
-
-    # A. Availability Mask
-    if not hub_logs.empty and 'bikes' in hub_logs.columns:
-        stock = hub_logs.set_index('timestamp')['bikes'].resample('1min').ffill().reindex(timeline, method='nearest')
-        mask_available = stock >= 1
-
-    # B. Weather Mask
     if df_weather is not None and not df_weather.empty:
-        df_weather.columns = [str(c).lower().strip() for c in df_weather.columns]
+        # Initialize vars
+        temp_col = None
+        rain_col = None
 
-        # Search for datetime column
+        df_weather.columns = [str(c).lower().strip() for c in df_weather.columns]
         possible_time_cols = ['datetime', 'timestamp', 'datum', 'cas', 'čas', 'date', 'time', 'local_time']
         w_time_col = next((c for c in df_weather.columns if c in possible_time_cols), None)
 
         if w_time_col:
-            # FORCE DATETIME CONVERSION (Fixes 'Index' error)
-            df_weather['timestamp'] = pd.to_datetime(df_weather[w_time_col], errors='coerce')
-            df_weather = df_weather.dropna(subset=['timestamp'])  # Remove bad dates
-
-            # Find data columns
-            temp_col = next((c for c in df_weather.columns if 'temp' in c or 'tepl' in c), None)
-            rain_col = next((c for c in df_weather.columns if
-                             'precip' in c or 'sraz' in c or 'sráž' in c or 'prset' in c or 'rain' in c), None)
-
-            if not temp_col and len(df_weather.columns) > 1: temp_col = df_weather.columns[2]
-            if not rain_col and len(df_weather.columns) > 6: rain_col = df_weather.columns[6]
-
             try:
+                df_weather['timestamp'] = pd.to_datetime(df_weather[w_time_col], errors='coerce')
+                df_weather = df_weather.dropna(subset=['timestamp'])
+
+                temp_col = next((c for c in df_weather.columns if 'temp' in c or 'tepl' in c), None)
+                rain_col = next(
+                    (c for c in df_weather.columns if 'precip' in c or 'sraz' in c or 'sráž' in c or 'rain' in c), None)
+
+                if not temp_col and len(df_weather.columns) > 1: temp_col = df_weather.columns[2]
+                if not rain_col and len(df_weather.columns) > 6: rain_col = df_weather.columns[6]
+
                 w_res = df_weather.set_index('timestamp').resample('1min').ffill().reindex(timeline, method='nearest')
 
                 t_val = w_res[temp_col] if temp_col else 15
                 r_val = w_res[rain_col] if rain_col else 0
 
-                mask_good = (r_val <= 0) & (t_val >= 10)
+                mask_good_weather = (r_val <= 0.2) & (t_val >= 10)
+                mask_bad_weather = ~mask_good_weather
             except Exception as e:
                 print(f"    [!] Weather Processing Error: {e}")
 
-    # Final combined mask
-    final_mask = mask_good & mask_available
-
-    # 7. MAIN LOOP
+    # =========================================================
+    # 8. CORRELATION LOOP
+    # =========================================================
     results = []
-    ts_starts = starts.set_index('start_time').resample('1min').size().reindex(timeline, fill_value=0)
-    ts_ends = ends.set_index('end_time').resample('1min').size().reindex(timeline, fill_value=0)
 
     for cat_name, type_list in categories.items():
         if type_list:
@@ -236,19 +312,36 @@ def analyze_city_data(city_name, config, df_trains, df_bikes, df_logs, df_weathe
             subset = hub_trains
 
         s_arr, s_dep = generate_signals(subset, timeline, config['params'])
-        idx_valid = final_mask & s_arr.index.isin(timeline)
 
-        if idx_valid.sum() > 60:
-            r_arr = s_arr[idx_valid].corr(ts_starts[idx_valid])
-            r_dep = s_dep[idx_valid].corr(ts_ends[idx_valid])
-        else:
-            r_arr, r_dep = np.nan, np.nan
+        def get_corr(signal, actuals, mask):
+            # Combine availability with the specific weather mask
+            valid_idx = mask & mask_available & signal.index.isin(timeline)
+            if valid_idx.sum() > 60:
+                return signal[valid_idx].corr(actuals[valid_idx])
+            return np.nan
+
+        # A. GLOBAL (All Weather)
+        mask_all = pd.Series(True, index=timeline)
+        r_arr_global = get_corr(s_arr, ts_starts, mask_all)
+        r_dep_global = get_corr(s_dep, ts_ends, mask_all)
+
+        # B. IDEAL (Good Weather)
+        r_arr_good = get_corr(s_arr, ts_starts, mask_good_weather)
+        r_dep_good = get_corr(s_dep, ts_ends, mask_good_weather)
+
+        # C. ADVERSE (Bad Weather)
+        r_arr_bad = get_corr(s_arr, ts_starts, mask_bad_weather)
+        r_dep_bad = get_corr(s_dep, ts_ends, mask_bad_weather)
 
         results.append({
             'City': city_name,
             'Category': cat_name,
-            'Arr_Corr': r_arr,
-            'Dep_Corr': r_dep
+            'Arr_Corr_Global': r_arr_global,
+            'Dep_Corr_Global': r_dep_global,
+            'Arr_Corr_Good': r_arr_good,
+            'Dep_Corr_Good': r_dep_good,
+            'Arr_Corr_Bad': r_arr_bad,
+            'Dep_Corr_Bad': r_dep_bad
         })
 
     return results
