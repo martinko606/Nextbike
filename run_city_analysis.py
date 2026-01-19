@@ -4,6 +4,8 @@ import seaborn as sns
 import matplotlib.dates as mdates
 import transport_analytics as ta
 import os
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # ==========================================
 # 1. GLOBAL FILE CONFIGURATION
@@ -27,19 +29,16 @@ NETWORKS = {
         'train_station': 'Ostrava-Svinov',
         'bike_stations': ['SV-Svinov nádraží *(navíc 15min na odjezd)'],
         'params': {
-            'weights': {
-                'Os': 2.0, 'Sp': 1.5, 'R': 1.5, 'Ex': 1
-            },
-            'peak_arr_reg': 2, 'pulse_arr_reg': 12,
-            'peak_arr_ld': 10, 'pulse_arr_ld': 35,
-
-            'peak_dep_reg': 10, 'pulse_dep_reg': 25,
-            'peak_dep_ld': 20, 'pulse_dep_ld': 45,
-
-            'rush_am': 2.0, 'rush_pm': 2.0
+            'weights': {'Os': 2.0, 'Sp': 1.7, 'R': 1.5, 'Ex': 1},
+            'peak_arr_reg': 2, 'pulse_arr_reg': 15,
+            'peak_arr_ld': 5, 'pulse_arr_ld': 20,
+            'peak_dep_reg': 8, 'pulse_dep_reg': 20,
+            'peak_dep_ld': 15, 'pulse_dep_ld': 35,
+            'rush_am': 2.0, 'rush_pm': 1.8
         },
         'vis_start': '2025-09-15 00:00',
-        'vis_end': '2025-10-19 23:59'
+        'vis_end': '2025-10-19 23:59',
+        'min_trip_minutes': 0.5
     },
 
     'Ostrava hl.n.': {
@@ -50,17 +49,13 @@ NETWORKS = {
         'sheet_rebal': 'Ostrava',
         'train_station': 'Ostrava-Svinov',
         'bike_stations': ['MOAP-Hlavní nádraží'],
-                'params': {
-            'weights': {
-                'Os': 2.0, 'Sp': 1.5, 'R': 1.5, 'Ex': 1
-            },
-            'peak_arr_reg': 2, 'pulse_arr_reg': 12,
-            'peak_arr_ld': 10, 'pulse_arr_ld': 35,
-
+        'params': {
+            'weights': {'Os': 2.0, 'Sp': 1.7, 'R': 1.5, 'Ex': 1},
+            'peak_arr_reg': 5, 'pulse_arr_reg': 25,
+            'peak_arr_ld': 10, 'pulse_arr_ld': 30,
             'peak_dep_reg': 10, 'pulse_dep_reg': 25,
-            'peak_dep_ld': 20, 'pulse_dep_ld': 45,
-
-            'rush_am': 2.0, 'rush_pm': 2.0
+            'peak_dep_ld': 15, 'pulse_dep_ld': 35,
+            'rush_am': 2.0, 'rush_pm': 1.7
         },
         'vis_start': '2025-09-15 00:00',
         'vis_end': '2025-10-19 23:59'
@@ -79,16 +74,12 @@ NETWORKS = {
             'Bajkazyl 666'
         ],
         'params': {
-            'weights': {
-                'Os': 2.0, 'Sp': 1.5, 'R': 1.5, 'Ex': 1
-            },
-            'peak_arr_reg': 2, 'pulse_arr_reg': 12,
-            'peak_arr_ld': 10, 'pulse_arr_ld': 35,
-
+            'weights': {'Os': 2.5, 'Sp': 2.0, 'R': 1.5, 'Ex': 1},
+            'peak_arr_reg': 3.5, 'pulse_arr_reg': 12,
+            'peak_arr_ld': 10, 'pulse_arr_ld': 30,
             'peak_dep_reg': 10, 'pulse_dep_reg': 25,
-            'peak_dep_ld': 20, 'pulse_dep_ld': 45,
-
-            'rush_am': 2.0, 'rush_pm': 2.0
+            'peak_dep_ld': 15, 'pulse_dep_ld': 35,
+            'rush_am': 2.5, 'rush_pm': 2.0
         },
         'vis_start': '2025-09-15 00:00',
         'vis_end': '2025-10-19 23:59'
@@ -97,21 +88,17 @@ NETWORKS = {
         'file_trains': 'data/Pohyby_Prerov.xlsx',
         'file_weather': 'data/Prerov_pocasi.xlsx',
         'sheet_rentals': 'Vypujcky_Prerov',
-        'sheet_logs': 'Stanice_Prerov',  # Verify if this is correct sheet name!
-        'sheet_rebal': 'Prerov',  # Verify if this is correct sheet name!
+        'sheet_logs': 'Stanice_Prerov',
+        'sheet_rebal': 'Prerov',
         'train_station': 'Přerov os.n.',
         'bike_stations': ['Nádraží'],
-                'params': {
-            'weights': {
-                'Os': 2.0, 'Sp': 1.5, 'R': 1.5, 'Ex': 1
-            },
-            'peak_arr_reg': 2, 'pulse_arr_reg': 12,
-            'peak_arr_ld': 10, 'pulse_arr_ld': 35,
-
-            'peak_dep_reg': 10, 'pulse_dep_reg': 25,
-            'peak_dep_ld': 20, 'pulse_dep_ld': 45,
-
-            'rush_am': 2.0, 'rush_pm': 2.0
+        'params': {
+            'weights': {'Os': 1.7, 'Sp': 1.4, 'R': 1.2, 'Ex': 1},
+            'peak_arr_reg': 3, 'pulse_arr_reg': 12,
+            'peak_arr_ld': 6, 'pulse_arr_ld': 15,
+            'peak_dep_reg': 10, 'pulse_dep_reg': 20,
+            'peak_dep_ld': 15, 'pulse_dep_ld': 30,
+            'rush_am': 1.7, 'rush_pm': 1.4
         },
         'vis_start': '2025-09-15 00:00',
         'vis_end': '2025-10-19 23:59'
@@ -125,16 +112,12 @@ NETWORKS = {
         'train_station': 'Valašské Meziříčí',
         'bike_stations': ['Vlakové nádraží Valašské Meziříčí (nové umístění)'],
         'params': {
-            'weights': {
-                'Os': 2.0, 'Sp': 1.5, 'R': 1.5, 'Ex': 1
-            },
-            'peak_arr_reg': 2, 'pulse_arr_reg': 12,
-            'peak_arr_ld': 10, 'pulse_arr_ld': 35,
-
-            'peak_dep_reg': 10, 'pulse_dep_reg': 25,
-            'peak_dep_ld': 20, 'pulse_dep_ld': 45,
-
-            'rush_am': 2.0, 'rush_pm': 2.0
+            'weights': {'Os': 1.8, 'Sp': 1.6, 'R': 1.4, 'Ex': 1.6},
+            'peak_arr_reg': 3, 'pulse_arr_reg': 12,
+            'peak_arr_ld': 8, 'pulse_arr_ld': 20,
+            'peak_dep_reg': 10, 'pulse_dep_reg': 20,
+            'peak_dep_ld': 20, 'pulse_dep_ld': 25,
+            'rush_am': 1.8, 'rush_pm': 1.4
         },
         'vis_start': '2025-09-15 00:00',
         'vis_end': '2025-10-19 23:59'
@@ -149,9 +132,10 @@ TRAIN_CATS = {
 
 
 # ==========================================
-# 3. VISUALIZATION FUNCTION
+# 3. VISUALIZATION FUNCTIONS
 # ==========================================
 def save_heartbeat_plot(city_name, trains, bikes, config):
+    """Generates the Static Heartbeat Plot (PNG)"""
     if 'vis_start' not in config: return
 
     print(f"  > Saving Heartbeat Plot for {city_name}...")
@@ -192,6 +176,80 @@ def save_heartbeat_plot(city_name, trains, bikes, config):
     plt.close()
 
 
+def save_interactive_heartbeat(city_name, trains, bikes, config):
+    """Generates the Interactive Heartbeat Plot (HTML)"""
+    if 'vis_start' not in config: return
+
+    print(f"  > Generating Interactive Plot for {city_name}...")
+    start_str, end_str = config['vis_start'], config['vis_end']
+    zoom_start, zoom_end = pd.to_datetime(start_str), pd.to_datetime(end_str)
+
+    # 1. Filter Data
+    t_mask = (trains['actual_arrival'] >= zoom_start) & (trains['actual_arrival'] <= zoom_end)
+    zoom_trains = trains[t_mask].copy()
+
+    b_mask = (bikes['start_time'] >= zoom_start) & (bikes['start_time'] <= zoom_end)
+    zoom_bikes = bikes[b_mask].copy()
+
+    if zoom_bikes.empty or zoom_trains.empty:
+        return
+
+    # 2. Process Signals
+    timeline = pd.date_range(zoom_start, zoom_end, freq='1min')
+    sig_arr, _ = ta.generate_signals(zoom_trains, timeline, config['params'])
+    bike_counts = zoom_bikes.set_index('start_time').resample('1min').size().reindex(timeline, fill_value=0)
+
+    # 3. Create Plotly Figure with Dual Axis
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    # Trace 1: Bike Rentals (Bars)
+    fig.add_trace(
+        go.Bar(
+            x=timeline,
+            y=bike_counts,
+            name="Actual Rentals",
+            marker_color='rgba(0, 76, 109, 0.6)',
+            marker_line_width=0
+        ),
+        secondary_y=False,
+    )
+
+    # Trace 2: Pressure Signal (Line)
+    fig.add_trace(
+        go.Scatter(
+            x=timeline,
+            y=sig_arr,
+            name="Passenger Pressure",
+            line=dict(color='#d55e00', width=2),
+            fill='tozeroy',
+            fillcolor='rgba(213, 94, 0, 0.1)'
+        ),
+        secondary_y=True,
+    )
+
+    # 4. Layout & Interactivity
+    fig.update_layout(
+        title=dict(text=f"Interactive Heartbeat: {city_name}", font=dict(size=20)),
+        xaxis=dict(
+            title="Time",
+            rangeslider=dict(visible=True),
+            type="date"
+        ),
+        legend=dict(x=0.01, y=0.99),
+        template="plotly_white",
+        height=600
+    )
+
+    # Axis Titles
+    fig.update_yaxes(title_text="<b>Bike Rentals</b> (Qty)", color="#004c6d", secondary_y=False)
+    fig.update_yaxes(title_text="<b>Passenger Pressure</b> (Theoretical)", color="#d55e00", secondary_y=True)
+
+    # 5. Save
+    output_path = os.path.join(RESULTS_DIR, f"Interactive_{city_name}.html")
+    fig.write_html(output_path)
+    print(f"    -> Saved interactive graph to: {output_path}")
+
+
 # ==========================================
 # 4. EXECUTION
 # ==========================================
@@ -211,33 +269,24 @@ def main():
     for city_key, config in NETWORKS.items():
         print(f"\n--- Processing {city_key} ---")
 
-        # run_city_analysis.py (Inside main loop)
-
         # 1. Load TRAINS (Smart Header Detection)
         if not os.path.exists(config['file_trains']):
             print(f"  Skipping: {config['file_trains']} missing.")
             continue
 
         try:
-            # Step A: Read first 10 rows without header
             df_preview = pd.read_excel(config['file_trains'], header=None, nrows=10)
-
-            # Step B: Find the row index that contains specific keywords
-            # We look for 'čas' (time) or 'druh' (type) or 'vlak' (train)
             header_idx = None
             for idx, row in df_preview.iterrows():
                 row_str = row.astype(str).str.lower().values
-                # Check if this row contains our target column names
                 if any('čas' in x or 'cas' in x or 'druh' in x for x in row_str):
                     header_idx = idx
                     break
 
-            # Step C: Load the full file using the found index
             if header_idx is not None:
                 print(f"  [INFO] Found train headers at Row {header_idx + 1}")
                 df_trains = pd.read_excel(config['file_trains'], header=header_idx)
             else:
-                # Fallback to default if no keywords found
                 print(f"  [WARN] Could not auto-detect header. Assuming Row 1.")
                 df_trains = pd.read_excel(config['file_trains'], header=0)
 
@@ -249,7 +298,7 @@ def main():
         if not os.path.exists(config['file_weather']):
             print(f"  Skipping: {config['file_weather']} missing.")
             continue
-        df_weather = pd.read_excel(config['file_weather'])
+        df_weather = pd.read_excel(config['file_weather'], decimal=',')
 
         # 3. Load RENTALS
         try:
@@ -268,12 +317,9 @@ def main():
             print(f"  Loading Logs Sheet: {log_sheet}...")
 
             df_logs_raw = pd.read_excel(FILE_BIKE_DATA, sheet_name=log_sheet)
-
-            # Normalize Headers
             df_logs_raw.columns = [str(c).strip() for c in df_logs_raw.columns]
             clean_cols = {c.lower(): c for c in df_logs_raw.columns}
 
-            # Find Time Column
             time_col = None
             for candidate in ['čas', 'cas', 'time', 'datum', 'timestamp']:
                 if candidate in clean_cols:
@@ -281,10 +327,9 @@ def main():
                     break
 
             if not time_col:
-                print(f"    [!] Log Warning: Time column not found (looked for 'Čas', 'cas'...).")
+                print(f"    [!] Log Warning: Time column not found.")
                 df_logs = None
             else:
-                # Find Station Columns
                 target_stations = config['bike_stations']
                 found_cols = []
                 for target in target_stations:
@@ -293,11 +338,10 @@ def main():
                         found_cols.append(match)
 
                 if found_cols:
-                    # Consolidate
                     df_logs = pd.DataFrame()
                     df_logs['timestamp'] = pd.to_datetime(df_logs_raw[time_col])
                     df_logs['bikes'] = df_logs_raw[found_cols].fillna(0).sum(axis=1)
-                    print(f"    -> Logs loaded: {len(df_logs)} records. Monitoring {len(found_cols)} station columns.")
+                    print(f"    -> Logs loaded: {len(df_logs)} records.")
                 else:
                     print(f"    [!] Log Warning: No matching station columns found.")
                     df_logs = None
@@ -306,35 +350,34 @@ def main():
             print(f"  Warning: Log processing failed ({e}). Analysis will assume full availability.")
             df_logs = None
 
-            # 5. Load REBALANCING & Filter
-            try:
-                # Get the limit from config (Default to 2 minutes if missing)
-                min_limit = config.get('min_trip_minutes', 0.5)
+        # 5. Load REBALANCING & Filter (Moved OUTSIDE the except block!)
+        try:
+            min_limit = config.get('min_trip_minutes', 0.5)
+            initial_count = len(df_bikes)
 
-                initial_count = len(df_bikes)
+            # Filter trips shorter than the limit
+            df_bikes = df_bikes[(df_bikes['end_time'] - df_bikes['start_time']) > pd.Timedelta(minutes=min_limit)]
+            print(f"  Filtered {initial_count - len(df_bikes)} short trips (< {min_limit} min).")
 
-                # Filter trips shorter than the limit
-                # Note: We do this REGARDLESS of whether rebalancing file exists
-                df_bikes = df_bikes[(df_bikes['end_time'] - df_bikes['start_time']) > pd.Timedelta(minutes=min_limit)]
+            if os.path.exists(FILE_REBALANCING):
+                # Just reading it to ensure it exists, specific logic dependent on your needs
+                pass
 
-                print(f"  Filtered {initial_count - len(df_bikes)} short trips (< {min_limit} min).")
-
-                # Load rebalancing file (optional, just for logging/safety)
-                if os.path.exists(FILE_REBALANCING):
-                    df_rebal = pd.read_excel(FILE_REBALANCING, sheet_name=config['sheet_rebal'])
-
-            except Exception as e:
-                print(f"  Warning: Filter/Rebalancing failed ({e}).")
+        except Exception as e:
+            print(f"  Warning: Filter/Rebalancing failed ({e}).")
 
         # --- RUN ANALYSIS ---
         res = ta.analyze_city_data(city_key, config, df_trains, df_bikes, df_logs, df_weather, TRAIN_CATS)
         all_results.extend(res)
 
         # --- RUN VISUALIZATION ---
-        # Note: We re-standardize inside save_heartbeat_plot logic indirectly,
-        # but ta.standard_columns modifies in-place, so it's safe to call here.
-        df_trains = ta.standard_columns(df_trains)
+        df_trains = ta.standard_columns(df_trains)  # Standardize again just in case
+
+        # 1. Static PNG
         save_heartbeat_plot(city_key, df_trains, df_bikes, config)
+
+        # 2. Interactive HTML
+        save_interactive_heartbeat(city_key, df_trains, df_bikes, config)
 
     # --- SAVE RESULTS ---
     if all_results:
