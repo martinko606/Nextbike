@@ -264,42 +264,59 @@ def analyze_city_data(city_name, config, df_trains, df_bikes, df_logs, df_weathe
     mask_available = (final_stock >= 1) | (ts_starts >= 1)
 
     # =========================================================
-    # 7. WEATHER STRATIFICATION
+    # 7. WEATHER STRATIFICATION (Robust Comma Fix)
     # =========================================================
+    # Defaults: Assume Good Weather if processing fails
     mask_good_weather = pd.Series(True, index=timeline)
     mask_bad_weather = pd.Series(False, index=timeline)
 
     if df_weather is not None and not df_weather.empty:
-        # Initialize vars
-        temp_col = None
-        rain_col = None
+        try:
+            # 1. Clean Column Names
+            df_weather.columns = [str(c).lower().strip() for c in df_weather.columns]
 
-        df_weather.columns = [str(c).lower().strip() for c in df_weather.columns]
-        possible_time_cols = ['datetime', 'timestamp', 'datum', 'cas', 'čas', 'date', 'time', 'local_time']
-        w_time_col = next((c for c in df_weather.columns if c in possible_time_cols), None)
+            # 2. Find Columns (Explicit Search)
+            # Time
+            w_time_col = next((c for c in df_weather.columns if c in ['datetime', 'timestamp', 'date', 'cas']), None)
 
-        if w_time_col:
-            try:
+            # Temp (Explicitly look for 'temp' or 'teplota')
+            temp_col = next((c for c in df_weather.columns if c in ['temp', 'temperature', 'teplota']), None)
+
+            # Rain (Explicitly look for 'precip' or 'srazky')
+            rain_col = next((c for c in df_weather.columns if c in ['precip', 'rain', 'srazky', 'precipprob']), None)
+
+            if w_time_col and temp_col and rain_col:
+                # 3. FIX COMMAS (The Critical Step)
+                # Convert columns to string, replace comma with dot, then back to numeric
+                for col in [temp_col, rain_col]:
+                    if df_weather[col].dtype == 'object':
+                        df_weather[col] = df_weather[col].astype(str).str.replace(',', '.')
+                    df_weather[col] = pd.to_numeric(df_weather[col], errors='coerce')
+
+                # 4. Process Timeline
                 df_weather['timestamp'] = pd.to_datetime(df_weather[w_time_col], errors='coerce')
                 df_weather = df_weather.dropna(subset=['timestamp'])
 
-                temp_col = next((c for c in df_weather.columns if 'temp' in c or 'tepl' in c), None)
-                rain_col = next(
-                    (c for c in df_weather.columns if 'precip' in c or 'sraz' in c or 'sráž' in c or 'rain' in c), None)
-
-                if not temp_col and len(df_weather.columns) > 1: temp_col = df_weather.columns[2]
-                if not rain_col and len(df_weather.columns) > 6: rain_col = df_weather.columns[6]
-
+                # Resample
                 w_res = df_weather.set_index('timestamp').resample('1min').ffill().reindex(timeline, method='nearest')
 
-                t_val = w_res[temp_col] if temp_col else 15
-                r_val = w_res[rain_col] if rain_col else 0
+                # 5. Extract Values
+                t_val = w_res[temp_col]
+                r_val = w_res[rain_col]
 
-                mask_good_weather = (r_val <= 0.2) & (t_val >= 10)
-                mask_bad_weather = ~mask_good_weather
-            except Exception as e:
-                print(f"    [!] Weather Processing Error: {e}")
+                # 6. Create Masks
+                # Bad Weather = Rain > 0.2mm OR Temp < 10C
+                mask_bad_logic = (r_val > 0.2) | (t_val < 10)
 
+                # Assign to our series
+                mask_bad_weather = mask_bad_logic.fillna(False)
+                mask_good_weather = ~mask_bad_weather
+
+                print(f"    [Weather] Bad weather detected: {mask_bad_weather.sum()} mins")
+
+        except Exception as e:
+            print(f"    [!] Weather Processing Warning: {e}")
+            # If this fails, mask_bad_weather remains False (NaN result)
     # =========================================================
     # 8. CORRELATION LOOP
     # =========================================================
