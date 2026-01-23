@@ -179,11 +179,8 @@ def analyze_city_data(city_name, config, df_trains, df_bikes, df_logs, df_weathe
     df_trains = standard_columns(df_trains)
 
     # 2. Filter Trains
-    if 'station' in df_trains.columns:
-        if len(df_trains['station'].unique()) > 1:
-            hub_trains = df_trains[df_trains['station'] == config['train_station']]
-        else:
-            hub_trains = df_trains
+    if 'station' in df_trains.columns and len(df_trains['station'].unique()) > 1:
+        hub_trains = df_trains[df_trains['station'] == config['train_station']]
     else:
         hub_trains = df_trains
 
@@ -206,39 +203,33 @@ def analyze_city_data(city_name, config, df_trains, df_bikes, df_logs, df_weathe
         return []
 
     # =========================================================
-    # 5. CALCULATE FLOWS (Rentals & Returns)
+    # 5. CALCULATE FLOWS & STOCK
     # =========================================================
-    # We need these immediately to calculate stock
+    # A. Individual Flows
     ts_starts = starts.set_index('start_time').resample('1min').size().reindex(timeline, fill_value=0)
     ts_ends = ends.set_index('end_time').resample('1min').size().reindex(timeline, fill_value=0)
 
-    # =========================================================
-    # 6. HYBRID STOCK CALCULATION (Rent Sheet + Log Correction)
-    # =========================================================
-    # A. Calculate Net Flow (Simulation)
+    # B. TOTAL BIKE ACTIVITY (Rentals + Returns)
+    ts_total_activity = ts_starts + ts_ends
+
+    # C. Hybrid Stock Simulation
     net_flow = ts_ends - ts_starts
     sim_stock = net_flow.cumsum()
 
-    # B. Load Logs (Ground Truth Checkpoints)
     log_stock = pd.Series(np.nan, index=timeline)
-
     if df_logs is not None and not df_logs.empty:
         df_logs.columns = [str(c).lower().strip() for c in df_logs.columns]
         time_col = next((c for c in df_logs.columns if c in ['čas', 'cas', 'time', 'timestamp', 'date']), None)
-
         if time_col:
             df_logs['timestamp'] = pd.to_datetime(df_logs[time_col])
-
-            # Identify relevant log rows
+            # Station column logic
             if 'place_name' in df_logs.columns:
                 target_rows = df_logs[df_logs['place_name'].isin(config['bike_stations'])]
                 cnt_col = next((c for c in df_logs.columns if c in ['bikes', 'count', 'pocet_kol']), None)
                 if cnt_col:
                     temp = target_rows.set_index('timestamp')[cnt_col]
-                    # Map logs to timeline (duplicates handled by taking last value)
                     log_stock.update(temp.groupby(level=0).last())
             else:
-                # Wide format fallback
                 found_cols = []
                 for target in config['bike_stations']:
                     match = next((col for col in df_logs.columns if target.lower() in col), None)
@@ -247,61 +238,57 @@ def analyze_city_data(city_name, config, df_trains, df_bikes, df_logs, df_weathe
                     temp = df_logs.set_index('timestamp')[found_cols].fillna(0).sum(axis=1)
                     log_stock.update(temp.groupby(level=0).last())
 
-    # C. Calculate Correction Offset
-    # Where we have a log, Offset = Log - Sim
     offsets = log_stock - sim_stock
-
-    # Forward Fill Offset (Carry the correction forward until the next log)
-    # Backfill allows us to estimate stock before the first log
     offsets = offsets.ffill().bfill().fillna(0)
-
-    # D. Final Hybrid Stock
     final_stock = sim_stock + offsets
 
-    # E. Create Availability Mask
-    # Rule 1: Stock > 0
-    # Rule 2: Rental Occurred (Safety override: If rental happened, bike WAS there)
+    # Mask Available
     mask_available = (final_stock >= 1) | (ts_starts >= 1)
 
     # =========================================================
-    # 7. WEATHER STRATIFICATION
+    # 6. MASKS (Weather, Workday, Peak)
     # =========================================================
     mask_good_weather = pd.Series(True, index=timeline)
     mask_bad_weather = pd.Series(False, index=timeline)
 
     if df_weather is not None and not df_weather.empty:
-        # Initialize vars
-        temp_col = None
-        rain_col = None
+        try:
+            df_weather.columns = [str(c).lower().strip() for c in df_weather.columns]
+            w_time_col = next((c for c in df_weather.columns if c in ['datetime', 'timestamp', 'date', 'cas']), None)
+            temp_col = next((c for c in df_weather.columns if c in ['temp', 'temperature', 'teplota']), None)
+            rain_col = next((c for c in df_weather.columns if c in ['precip', 'rain', 'srazky']), None)
 
-        df_weather.columns = [str(c).lower().strip() for c in df_weather.columns]
-        possible_time_cols = ['datetime', 'timestamp', 'datum', 'cas', 'čas', 'date', 'time', 'local_time']
-        w_time_col = next((c for c in df_weather.columns if c in possible_time_cols), None)
+            if w_time_col and temp_col and rain_col:
+                for col in [temp_col, rain_col]:
+                    if df_weather[col].dtype == 'object':
+                        df_weather[col] = df_weather[col].astype(str).str.replace(',', '.')
+                    df_weather[col] = pd.to_numeric(df_weather[col], errors='coerce')
 
-        if w_time_col:
-            try:
                 df_weather['timestamp'] = pd.to_datetime(df_weather[w_time_col], errors='coerce')
                 df_weather = df_weather.dropna(subset=['timestamp'])
+                # Round time to nearest minute first to kill jitter
+                df_weather['timestamp'] = df_weather['timestamp'].dt.round('1min')
+                # Use ffill (Forward Fill) instead of nearest
+                w_res = df_weather.set_index('timestamp').resample('1min').ffill().reindex(timeline, method='ffill')
 
-                temp_col = next((c for c in df_weather.columns if 'temp' in c or 'tepl' in c), None)
-                rain_col = next(
-                    (c for c in df_weather.columns if 'precip' in c or 'sraz' in c or 'sráž' in c or 'rain' in c), None)
+                mask_bad_logic = (w_res[rain_col] > 0.2) | (w_res[temp_col] < 10)
+                mask_bad_weather = mask_bad_logic.fillna(False)
+                mask_good_weather = ~mask_bad_weather
+        except Exception as e:
+            print(f"    [!] Weather Processing Warning: {e}")
 
-                if not temp_col and len(df_weather.columns) > 1: temp_col = df_weather.columns[2]
-                if not rain_col and len(df_weather.columns) > 6: rain_col = df_weather.columns[6]
+    mask_workday = timeline.dayofweek < 5
+    mask_weekend = timeline.dayofweek >= 5
 
-                w_res = df_weather.set_index('timestamp').resample('1min').ffill().reindex(timeline, method='nearest')
+    hours = timeline.hour
+    mask_am_rush = (hours >= 6) & (hours < 9)
+    mask_pm_rush = (hours >= 15) & (hours < 18)
 
-                t_val = w_res[temp_col] if temp_col else 15
-                r_val = w_res[rain_col] if rain_col else 0
-
-                mask_good_weather = (r_val <= 0.2) & (t_val >= 10)
-                mask_bad_weather = ~mask_good_weather
-            except Exception as e:
-                print(f"    [!] Weather Processing Error: {e}")
+    mask_workday_am = mask_workday & mask_am_rush
+    mask_workday_pm = mask_workday & mask_pm_rush
 
     # =========================================================
-    # 8. CORRELATION LOOP
+    # 7. CORRELATION LOOP
     # =========================================================
     results = []
 
@@ -309,39 +296,62 @@ def analyze_city_data(city_name, config, df_trains, df_bikes, df_logs, df_weathe
         if type_list:
             subset = hub_trains[hub_trains['train_type'].isin(type_list)]
         else:
-            subset = hub_trains
+            subset = hub_trains  # ALL Trains
 
         s_arr, s_dep = generate_signals(subset, timeline, config['params'])
 
-        def get_corr(signal, actuals, mask):
-            # Combine availability with the specific weather mask
-            valid_idx = mask & mask_available & signal.index.isin(timeline)
-            if valid_idx.sum() > 60:
-                return signal[valid_idx].corr(actuals[valid_idx])
-            return np.nan
+        # --- NEW: TOTAL TRAIN PRESSURE (Arr + Dep) ---
+        s_total = s_arr + s_dep
 
-        # A. GLOBAL (All Weather)
-        mask_all = pd.Series(True, index=timeline)
-        r_arr_global = get_corr(s_arr, ts_starts, mask_all)
-        r_dep_global = get_corr(s_dep, ts_ends, mask_all)
+        def get_corr(signal, actuals, context_mask):
+            valid_idx = context_mask & mask_available & signal.index.isin(timeline)
+            if valid_idx.sum() < 60: return np.nan
+            s_vec = signal[valid_idx]
+            a_vec = actuals[valid_idx]
+            if s_vec.std() == 0 or a_vec.std() == 0: return np.nan
+            return s_vec.corr(a_vec)
 
-        # B. IDEAL (Good Weather)
-        r_arr_good = get_corr(s_arr, ts_starts, mask_good_weather)
-        r_dep_good = get_corr(s_dep, ts_ends, mask_good_weather)
+        # 1. TOTAL GLOBAL (The Combined Metric)
+        #    Signal: Arr + Dep
+        #    Actuals: Rentals + Returns
+        r_total_global = get_corr(s_total, ts_total_activity, pd.Series(True, index=timeline))
 
-        # C. ADVERSE (Bad Weather)
+        # 2. Directional Baselines
+        r_arr_global = get_corr(s_arr, ts_starts, pd.Series(True, index=timeline))
+        r_dep_global = get_corr(s_dep, ts_ends, pd.Series(True, index=timeline))
+
+        # 3. Weather
         r_arr_bad = get_corr(s_arr, ts_starts, mask_bad_weather)
         r_dep_bad = get_corr(s_dep, ts_ends, mask_bad_weather)
+
+        # 4. Day Type
+        r_arr_work = get_corr(s_arr, ts_starts, mask_workday)
+        r_dep_work = get_corr(s_dep, ts_ends, mask_workday)
+        r_arr_wknd = get_corr(s_arr, ts_starts, mask_weekend)
+        r_dep_wknd = get_corr(s_dep, ts_ends, mask_weekend)
+
+        # 5. Peaks
+        r_arr_am = get_corr(s_arr, ts_starts, mask_workday_am)
+        r_dep_pm = get_corr(s_dep, ts_ends, mask_workday_pm)
 
         results.append({
             'City': city_name,
             'Category': cat_name,
-            'Arr_Corr_Global': r_arr_global,
-            'Dep_Corr_Global': r_dep_global,
-            'Arr_Corr_Good': r_arr_good,
-            'Dep_Corr_Good': r_dep_good,
-            'Arr_Corr_Bad': r_arr_bad,
-            'Dep_Corr_Bad': r_dep_bad
+
+            # === THE NEW METRIC ===
+            'Total_Activity_Corr': r_total_global,
+            # ======================
+
+            'Arr_Global': r_arr_global,
+            'Dep_Global': r_dep_global,
+            'Arr_BadWeather': r_arr_bad,
+            'Dep_BadWeather': r_dep_bad,
+            'Arr_Workday': r_arr_work,
+            'Dep_Workday': r_dep_work,
+            'Arr_Weekend': r_arr_wknd,
+            'Dep_Weekend': r_dep_wknd,
+            'Arr_Workday_AM': r_arr_am,
+            'Dep_Workday_PM': r_dep_pm
         })
 
     return results

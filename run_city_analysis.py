@@ -4,6 +4,9 @@ import seaborn as sns
 import matplotlib.dates as mdates
 import transport_analytics as ta
 import os
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # ==========================================
 # 1. GLOBAL FILE CONFIGURATION
@@ -27,16 +30,12 @@ NETWORKS = {
         'train_station': 'Ostrava-Svinov',
         'bike_stations': ['SV-Svinov nádraží *(navíc 15min na odjezd)'],
         'params': {
-            'weights': {
-                'Os': 2.0, 'Sp': 1.5, 'R': 1.5, 'Ex': 1
-            },
-            'peak_arr_reg': 2, 'pulse_arr_reg': 12,
-            'peak_arr_ld': 10, 'pulse_arr_ld': 35,
-
-            'peak_dep_reg': 10, 'pulse_dep_reg': 25,
-            'peak_dep_ld': 20, 'pulse_dep_ld': 45,
-
-            'rush_am': 2.0, 'rush_pm': 2.0
+            'weights': {'Os': 2.0, 'Sp': 1.7, 'R': 1.5, 'Ex': 1},
+            'peak_arr_reg': 2, 'pulse_arr_reg': 15,
+            'peak_arr_ld': 5, 'pulse_arr_ld': 20,
+            'peak_dep_reg': 8, 'pulse_dep_reg': 20,
+            'peak_dep_ld': 15, 'pulse_dep_ld': 35,
+            'rush_am': 2.0, 'rush_pm': 1.8
         },
         'vis_start': '2025-09-15 00:00',
         'vis_end': '2025-10-19 23:59'
@@ -50,17 +49,13 @@ NETWORKS = {
         'sheet_rebal': 'Ostrava',
         'train_station': 'Ostrava-Svinov',
         'bike_stations': ['MOAP-Hlavní nádraží'],
-                'params': {
-            'weights': {
-                'Os': 2.0, 'Sp': 1.5, 'R': 1.5, 'Ex': 1
-            },
-            'peak_arr_reg': 2, 'pulse_arr_reg': 12,
-            'peak_arr_ld': 10, 'pulse_arr_ld': 35,
-
+        'params': {
+            'weights': {'Os': 2.0, 'Sp': 1.7, 'R': 1.5, 'Ex': 1},
+            'peak_arr_reg': 5, 'pulse_arr_reg': 25,
+            'peak_arr_ld': 10, 'pulse_arr_ld': 30,
             'peak_dep_reg': 10, 'pulse_dep_reg': 25,
-            'peak_dep_ld': 20, 'pulse_dep_ld': 45,
-
-            'rush_am': 2.0, 'rush_pm': 2.0
+            'peak_dep_ld': 15, 'pulse_dep_ld': 35,
+            'rush_am': 2.0, 'rush_pm': 1.7
         },
         'vis_start': '2025-09-15 00:00',
         'vis_end': '2025-10-19 23:59'
@@ -79,16 +74,12 @@ NETWORKS = {
             'Bajkazyl 666'
         ],
         'params': {
-            'weights': {
-                'Os': 2.0, 'Sp': 1.5, 'R': 1.5, 'Ex': 1
-            },
-            'peak_arr_reg': 2, 'pulse_arr_reg': 12,
-            'peak_arr_ld': 10, 'pulse_arr_ld': 35,
-
+            'weights': {'Os': 2.5, 'Sp': 2.0, 'R': 1.5, 'Ex': 1},
+            'peak_arr_reg': 3.5, 'pulse_arr_reg': 12,
+            'peak_arr_ld': 10, 'pulse_arr_ld': 30,
             'peak_dep_reg': 10, 'pulse_dep_reg': 25,
-            'peak_dep_ld': 20, 'pulse_dep_ld': 45,
-
-            'rush_am': 2.0, 'rush_pm': 2.0
+            'peak_dep_ld': 15, 'pulse_dep_ld': 35,
+            'rush_am': 2.5, 'rush_pm': 2.0
         },
         'vis_start': '2025-09-15 00:00',
         'vis_end': '2025-10-19 23:59'
@@ -97,21 +88,17 @@ NETWORKS = {
         'file_trains': 'data/Pohyby_Prerov.xlsx',
         'file_weather': 'data/Prerov_pocasi.xlsx',
         'sheet_rentals': 'Vypujcky_Prerov',
-        'sheet_logs': 'Stanice_Prerov',  # Verify if this is correct sheet name!
-        'sheet_rebal': 'Prerov',  # Verify if this is correct sheet name!
+        'sheet_logs': 'Stanice_Prerov',
+        'sheet_rebal': 'Prerov',
         'train_station': 'Přerov os.n.',
         'bike_stations': ['Nádraží'],
-                'params': {
-            'weights': {
-                'Os': 2.0, 'Sp': 1.5, 'R': 1.5, 'Ex': 1
-            },
-            'peak_arr_reg': 2, 'pulse_arr_reg': 12,
-            'peak_arr_ld': 10, 'pulse_arr_ld': 35,
-
-            'peak_dep_reg': 10, 'pulse_dep_reg': 25,
-            'peak_dep_ld': 20, 'pulse_dep_ld': 45,
-
-            'rush_am': 2.0, 'rush_pm': 2.0
+        'params': {
+            'weights': {'Os': 1.7, 'Sp': 1.4, 'R': 1.2, 'Ex': 1},
+            'peak_arr_reg': 3, 'pulse_arr_reg': 12,
+            'peak_arr_ld': 6, 'pulse_arr_ld': 15,
+            'peak_dep_reg': 10, 'pulse_dep_reg': 20,
+            'peak_dep_ld': 15, 'pulse_dep_ld': 30,
+            'rush_am': 1.7, 'rush_pm': 1.4
         },
         'vis_start': '2025-09-15 00:00',
         'vis_end': '2025-10-19 23:59'
@@ -125,16 +112,12 @@ NETWORKS = {
         'train_station': 'Valašské Meziříčí',
         'bike_stations': ['Vlakové nádraží Valašské Meziříčí (nové umístění)'],
         'params': {
-            'weights': {
-                'Os': 2.0, 'Sp': 1.5, 'R': 1.5, 'Ex': 1
-            },
-            'peak_arr_reg': 2, 'pulse_arr_reg': 12,
-            'peak_arr_ld': 10, 'pulse_arr_ld': 35,
-
-            'peak_dep_reg': 10, 'pulse_dep_reg': 25,
-            'peak_dep_ld': 20, 'pulse_dep_ld': 45,
-
-            'rush_am': 2.0, 'rush_pm': 2.0
+            'weights': {'Os': 1.8, 'Sp': 1.6, 'R': 1.4, 'Ex': 1.6},
+            'peak_arr_reg': 3, 'pulse_arr_reg': 12,
+            'peak_arr_ld': 8, 'pulse_arr_ld': 20,
+            'peak_dep_reg': 10, 'pulse_dep_reg': 20,
+            'peak_dep_ld': 20, 'pulse_dep_ld': 25,
+            'rush_am': 1.8, 'rush_pm': 1.4
         },
         'vis_start': '2025-09-15 00:00',
         'vis_end': '2025-10-19 23:59'
@@ -149,48 +132,269 @@ TRAIN_CATS = {
 
 
 # ==========================================
-# 3. VISUALIZATION FUNCTION
+# 3. VISUALIZATION FUNCTIONS (The "Activity River" Version)
 # ==========================================
-def save_heartbeat_plot(city_name, trains, bikes, config):
+
+# ==========================================
+# 3. VISUALIZATION FUNCTIONS (Fixed: Total Pressure & Scaling)
+# ==========================================
+
+def save_heartbeat_plot(city_name, trains, bikes, logs, config):
+    """
+    Generates Static Flow Plot (Rentals UP vs Returns DOWN).
+    Fixes:
+    1. Uses TOTAL Pressure (Arr + Dep) so afternoon rush is visible.
+    2. Auto-scales Y-axis to fit the pressure peaks perfectly.
+    """
     if 'vis_start' not in config: return
 
     print(f"  > Saving Heartbeat Plot for {city_name}...")
     start_str, end_str = config['vis_start'], config['vis_end']
     zoom_start, zoom_end = pd.to_datetime(start_str), pd.to_datetime(end_str)
 
-    # Filter Data
+    # Use 15-min bins for cleaner static bars
+    resample_rate = '15min'
+    timeline_res = pd.date_range(zoom_start, zoom_end, freq=resample_rate)
+    timeline_1min = pd.date_range(zoom_start, zoom_end, freq='1min')
+
+    # 1. PREPARE SIGNALS (TOTAL PRESSURE)
     t_mask = (trains['actual_arrival'] >= zoom_start) & (trains['actual_arrival'] <= zoom_end)
     zoom_trains = trains[t_mask].copy()
 
-    b_mask = (bikes['start_time'] >= zoom_start) & (bikes['start_time'] <= zoom_end)
-    zoom_bikes = bikes[b_mask].copy()
+    # Generate Both Signals
+    s_arr, s_dep = ta.generate_signals(zoom_trains, timeline_1min, config['params'])
 
-    if zoom_bikes.empty or zoom_trains.empty:
-        print(f"    Warning: No data found in window {start_str} - {end_str}")
-        return
+    # SUM THEM: This fixes the "missing afternoon" issue
+    sig_total = s_arr + s_dep
 
-    timeline = pd.date_range(zoom_start, zoom_end, freq='1min')
-    sig_arr, _ = ta.generate_signals(zoom_trains, timeline, config['params'])
-    bike_counts = zoom_bikes.set_index('start_time').resample('1min').size().reindex(timeline, fill_value=0)
+    # Resample for plotting (Mean pressure over 15 mins)
+    sig_resampled = sig_total.resample(resample_rate).mean()
 
-    # Plotting
-    fig, ax1 = plt.subplots(figsize=(12, 6))
-    ax1.bar(timeline, bike_counts, width=0.0007, color='#004c6d', alpha=0.6, label='Actual Rentals')
-    ax1.set_ylabel('Bike Rentals', color='#004c6d')
-    ax1.tick_params(axis='y', labelcolor='#004c6d')
+    # 2. PREPARE FLOWS
+    starts = bikes[bikes['start_place'].isin(config['bike_stations'])]
+    ends = bikes[bikes['end_place'].isin(config['bike_stations'])]
 
+    ts_rentals = starts.set_index('start_time').resample(resample_rate).size().reindex(timeline_res, fill_value=0)
+    ts_returns = ends.set_index('end_time').resample(resample_rate).size().reindex(timeline_res, fill_value=0) * -1
+
+    # 3. PLOTTING
+    fig, ax1 = plt.subplots(figsize=(14, 8))
+
+    # PRIMARY AXIS: FLOWS
+    ax1.bar(timeline_res, ts_rentals, width=0.007, color='#2ca02c', alpha=0.7, label='Rentals (Outflow)',
+            align='center')
+    ax1.bar(timeline_res, ts_returns, width=0.007, color='#1f77b4', alpha=0.7, label='Returns (Inflow)', align='center')
+
+    ax1.axhline(0, color='black', linewidth=0.8)
+    ax1.set_ylabel('Bike Activity (per 15 min)', fontsize=12, fontweight='bold')
+
+    # SECONDARY AXIS: PRESSURE
     ax2 = ax1.twinx()
-    ax2.plot(timeline, sig_arr, color='#d55e00', linewidth=2, label='Passenger Pressure')
-    ax2.fill_between(timeline, sig_arr, color='#d55e00', alpha=0.1)
-    ax2.set_ylabel('Theoretical Pressure', color='#d55e00')
+
+    # Plot the Total Pressure
+    ax2.plot(timeline_res, sig_resampled, color='#d55e00', linewidth=2.5, label='Total Passenger Pressure')
+    ax2.fill_between(timeline_res, sig_resampled, color='#d55e00', alpha=0.1)
+
+    ax2.set_ylabel('Passenger Pressure (Arr + Dep)', color='#d55e00', fontsize=12, fontweight='bold')
     ax2.tick_params(axis='y', labelcolor='#d55e00')
 
-    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-    plt.title(f"Heartbeat: {city_name} ({start_str})")
+    # SCALING FIX: Ensure the line doesn't hit the very top or stay too low
+    if not sig_resampled.empty and sig_resampled.max() > 0:
+        ax2.set_ylim(0, sig_resampled.max() * 1.15)  # Add 15% headroom
+    else:
+        ax2.set_ylim(0, 1)
+
+    # Formatting
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%a %H:%M'))
+    plt.title(f"Station Pulse: {city_name}\n(Bars: Actual Bikes | Line: Total Train Pressure)", fontsize=16)
+    plt.grid(True, alpha=0.3)
+
+    # Legend
+    lines_1, labels_1 = ax1.get_legend_handles_labels()
+    lines_2, labels_2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper left')
+
     plt.tight_layout()
-    plt.savefig(os.path.join(RESULTS_DIR, f"Heartbeat_{city_name}.png"))
+    plt.savefig(os.path.join(RESULTS_DIR, f"Heartbeat_{city_name}.png"), dpi=300)
     plt.close()
 
+
+def save_interactive_heartbeat(city_name, trains, bikes, logs, config):
+    """Generates Interactive Flow Plot with Total Pressure."""
+    if 'vis_start' not in config: return
+
+    print(f"  > Generating Interactive Plot for {city_name}...")
+    start_str, end_str = config['vis_start'], config['vis_end']
+    zoom_start, zoom_end = pd.to_datetime(start_str), pd.to_datetime(end_str)
+    timeline = pd.date_range(zoom_start, zoom_end, freq='1min')
+
+    # 1. Pressure (Total)
+    t_mask = (trains['actual_arrival'] >= zoom_start) & (trains['actual_arrival'] <= zoom_end)
+    zoom_trains = trains[t_mask].copy()
+    s_arr, s_dep = ta.generate_signals(zoom_trains, timeline, config['params'])
+    sig_total = s_arr + s_dep  # <--- The Fix
+
+    # 2. Flows
+    starts = bikes[bikes['start_place'].isin(config['bike_stations'])]
+    ends = bikes[bikes['end_place'].isin(config['bike_stations'])]
+
+    ts_rentals = starts.set_index('start_time').resample('1min').size().reindex(timeline, fill_value=0)
+    ts_returns = ends.set_index('end_time').resample('1min').size().reindex(timeline, fill_value=0) * -1
+
+    # 3. Plotly
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    fig.add_trace(go.Bar(x=timeline, y=ts_rentals, name="Rentals (Out)", marker_color='#2ca02c', marker_line_width=0),
+                  secondary_y=False)
+    fig.add_trace(go.Bar(x=timeline, y=ts_returns, name="Returns (In)", marker_color='#1f77b4', marker_line_width=0),
+                  secondary_y=False)
+
+    fig.add_trace(
+        go.Scatter(x=timeline, y=sig_total, name="Total Pressure", line=dict(color='#d55e00', width=2), hoverinfo='y'),
+        secondary_y=True)
+
+    fig.update_layout(
+        title=dict(text=f"Interactive Pulse: {city_name}", font=dict(size=20)),
+        xaxis=dict(title="Time", rangeslider=dict(visible=True), type="date"),
+        legend=dict(x=0.01, y=0.99, bgcolor='rgba(255,255,255,0.8)'),
+        template="plotly_white",
+        height=600,
+        barmode='overlay'
+    )
+
+    fig.update_yaxes(title_text="<b>Bike Activity</b> (Qty/min)", secondary_y=False)
+    fig.update_yaxes(title_text="<b>Total Passenger Pressure</b>", color="#d55e00", secondary_y=True)
+
+    output_path = os.path.join(RESULTS_DIR, f"Interactive_{city_name}.html")
+    fig.write_html(output_path)
+    print(f"    -> Saved interactive graph to: {output_path}")
+
+def plot_split_violin(city_name, trains, bikes, config):
+    """
+    Generates a Split Violin Plot with Enhanced Contrast.
+    - Reduces smoothing to show individual train peaks.
+    - Applies mild non-linear scaling to accentuate pressure differences.
+    """
+    if 'vis_start' not in config: return
+    print(f"  > Generating Synchronization Violin Plot for {city_name}...")
+
+    start_str, end_str = config['vis_start'], config['vis_end']
+    zoom_start, zoom_end = pd.to_datetime(start_str), pd.to_datetime(end_str)
+
+    timeline = pd.date_range(zoom_start, zoom_end, freq='1min')
+
+    # 1. BIKE DATA
+    b_mask_start = (bikes['start_time'] >= zoom_start) & (bikes['start_time'] <= zoom_end)
+    b_mask_end = (bikes['end_time'] >= zoom_start) & (bikes['end_time'] <= zoom_end)
+
+    bike_times = pd.concat([
+        bikes.loc[b_mask_start, 'start_time'],
+        bikes.loc[b_mask_end, 'end_time']
+    ])
+
+    # 2. TRAIN DATA
+    df_trains = ta.standard_columns(trains)
+    t_mask = (df_trains['actual_arrival'] >= zoom_start) & (df_trains['actual_arrival'] <= zoom_end)
+    subset_trains = df_trains[t_mask].copy()
+
+    if bike_times.empty or subset_trains.empty:
+        return
+
+    # Generate signals
+    s_arr, s_dep = ta.generate_signals(subset_trains, timeline, config['params'])
+    sig_total = s_arr + s_dep
+
+    # 3. BUILD DATAFRAME
+    data_rows = []
+
+    # A. Bike Events (Blue)
+    for t in bike_times:
+        data_rows.append({
+            'Day': t.strftime('%a'),
+            'DayNum': t.dayofweek,
+            'Hour': t.hour + t.minute / 60.0,
+            'Type': 'Total Bike Movements'
+        })
+
+    # B. Train Events (Orange) - WITH CONTRAST BOOST
+    sig_resampled = sig_total.resample('10min').mean()
+
+    # Keep even small signals (night trains)
+    sig_resampled = sig_resampled[sig_resampled > 0.0001]
+
+    if not sig_resampled.empty:
+        # CONTRAST BOOST: Raise to power 1.5 to make peaks "pop" more
+        # This makes the wide parts wider and narrow parts narrower visually
+        sig_enhanced = sig_resampled ** 1.5
+
+        # Recalculate scaling based on enhanced signal
+        target_count = len(bike_times)
+        sum_pressure = sig_enhanced.sum()
+        scale_factor = (target_count / sum_pressure) if sum_pressure > 0 else 1
+
+        for t, val in sig_enhanced.items():
+            count = int(round(val * scale_factor))
+
+            # Ensure visibility for non-zero pressure
+            if count == 0 and val > 0: count = 1
+
+            if count > 0:
+                data_rows.extend([{
+                    'Day': t.strftime('%a'),
+                    'DayNum': t.dayofweek,
+                    'Hour': t.hour + t.minute / 60.0,
+                    'Type': 'Total Passenger Pressure'
+                }] * count)
+
+    df_viz = pd.DataFrame(data_rows)
+    df_viz.sort_values('DayNum', inplace=True)
+
+    # 4. PLOTTING
+    plt.figure(figsize=(14, 12))
+    sns.set_style("whitegrid")
+
+    day_order = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    my_pal = {"Total Bike Movements": "#1f77b4", "Total Passenger Pressure": "#ff7f0e"}
+
+    try:
+        ax = sns.violinplot(
+            data=df_viz,
+            x='Day',
+            y='Hour',
+            hue='Type',
+            split=True,
+            order=day_order,
+            palette=my_pal,
+            inner="quartile",
+            scale="count",
+            cut=0,
+            bw_adjust=0.35  # <--- KEY CHANGE: Lower bandwidth = Sharper Details
+        )
+
+        plt.title(f"Station Synchronization: {city_name}\n(Left: Bike Rentals+Returns | Right: Train Arr+Dep)",
+                  fontsize=16, fontweight='bold')
+        plt.ylabel("Time of Day", fontsize=12)
+        plt.xlabel("")
+
+        # Axis 00-24
+        ax.set_ylim(24, 0)
+        ax.set_yticks(range(0, 25, 2))
+        ax.set_yticklabels([f"{h:02d}:00" for h in range(0, 25, 2)])
+
+        # Lines
+        plt.axhline(y=7.0, color='red', linestyle='--', alpha=0.4, label='Morning Rush (7:00)')
+        plt.axhline(y=16.0, color='blue', linestyle='--', alpha=0.4, label='Afternoon Rush (16:00)')
+
+        plt.legend(title="", loc='upper center', bbox_to_anchor=(0.5, -0.05), ncol=2, frameon=False, fontsize=12)
+
+        output_path = os.path.join(RESULTS_DIR, f"Violin_Sync_{city_name}.png")
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=600)
+        plt.close()
+        print(f"    -> Saved enhanced violin plot to: {output_path}")
+
+    except Exception as e:
+        print(f"    [!] Error plotting violin: {e}")
 
 # ==========================================
 # 4. EXECUTION
@@ -211,33 +415,24 @@ def main():
     for city_key, config in NETWORKS.items():
         print(f"\n--- Processing {city_key} ---")
 
-        # run_city_analysis.py (Inside main loop)
-
-        # 1. Load TRAINS (Smart Header Detection)
+        # 1. Load TRAINS
         if not os.path.exists(config['file_trains']):
             print(f"  Skipping: {config['file_trains']} missing.")
             continue
 
         try:
-            # Step A: Read first 10 rows without header
             df_preview = pd.read_excel(config['file_trains'], header=None, nrows=10)
-
-            # Step B: Find the row index that contains specific keywords
-            # We look for 'čas' (time) or 'druh' (type) or 'vlak' (train)
             header_idx = None
             for idx, row in df_preview.iterrows():
                 row_str = row.astype(str).str.lower().values
-                # Check if this row contains our target column names
                 if any('čas' in x or 'cas' in x or 'druh' in x for x in row_str):
                     header_idx = idx
                     break
 
-            # Step C: Load the full file using the found index
             if header_idx is not None:
                 print(f"  [INFO] Found train headers at Row {header_idx + 1}")
                 df_trains = pd.read_excel(config['file_trains'], header=header_idx)
             else:
-                # Fallback to default if no keywords found
                 print(f"  [WARN] Could not auto-detect header. Assuming Row 1.")
                 df_trains = pd.read_excel(config['file_trains'], header=0)
 
@@ -249,7 +444,7 @@ def main():
         if not os.path.exists(config['file_weather']):
             print(f"  Skipping: {config['file_weather']} missing.")
             continue
-        df_weather = pd.read_excel(config['file_weather'])
+        df_weather = pd.read_excel(config['file_weather'], decimal=',')
 
         # 3. Load RENTALS
         try:
@@ -268,12 +463,9 @@ def main():
             print(f"  Loading Logs Sheet: {log_sheet}...")
 
             df_logs_raw = pd.read_excel(FILE_BIKE_DATA, sheet_name=log_sheet)
-
-            # Normalize Headers
             df_logs_raw.columns = [str(c).strip() for c in df_logs_raw.columns]
             clean_cols = {c.lower(): c for c in df_logs_raw.columns}
 
-            # Find Time Column
             time_col = None
             for candidate in ['čas', 'cas', 'time', 'datum', 'timestamp']:
                 if candidate in clean_cols:
@@ -281,10 +473,9 @@ def main():
                     break
 
             if not time_col:
-                print(f"    [!] Log Warning: Time column not found (looked for 'Čas', 'cas'...).")
+                print(f"    [!] Log Warning: Time column not found.")
                 df_logs = None
             else:
-                # Find Station Columns
                 target_stations = config['bike_stations']
                 found_cols = []
                 for target in target_stations:
@@ -293,11 +484,10 @@ def main():
                         found_cols.append(match)
 
                 if found_cols:
-                    # Consolidate
                     df_logs = pd.DataFrame()
                     df_logs['timestamp'] = pd.to_datetime(df_logs_raw[time_col])
                     df_logs['bikes'] = df_logs_raw[found_cols].fillna(0).sum(axis=1)
-                    print(f"    -> Logs loaded: {len(df_logs)} records. Monitoring {len(found_cols)} station columns.")
+                    print(f"    -> Logs loaded: {len(df_logs)} records.")
                 else:
                     print(f"    [!] Log Warning: No matching station columns found.")
                     df_logs = None
@@ -306,35 +496,30 @@ def main():
             print(f"  Warning: Log processing failed ({e}). Analysis will assume full availability.")
             df_logs = None
 
-            # 5. Load REBALANCING & Filter
-            try:
-                # Get the limit from config (Default to 2 minutes if missing)
-                min_limit = config.get('min_trip_minutes', 0.5)
-
-                initial_count = len(df_bikes)
-
-                # Filter trips shorter than the limit
-                # Note: We do this REGARDLESS of whether rebalancing file exists
-                df_bikes = df_bikes[(df_bikes['end_time'] - df_bikes['start_time']) > pd.Timedelta(minutes=min_limit)]
-
-                print(f"  Filtered {initial_count - len(df_bikes)} short trips (< {min_limit} min).")
-
-                # Load rebalancing file (optional, just for logging/safety)
-                if os.path.exists(FILE_REBALANCING):
-                    df_rebal = pd.read_excel(FILE_REBALANCING, sheet_name=config['sheet_rebal'])
-
-            except Exception as e:
-                print(f"  Warning: Filter/Rebalancing failed ({e}).")
+        # 5. Load REBALANCING & Filter
+        try:
+            min_limit = config.get('min_trip_minutes', 0.5)
+            initial_count = len(df_bikes)
+            df_bikes = df_bikes[(df_bikes['end_time'] - df_bikes['start_time']) > pd.Timedelta(minutes=min_limit)]
+            print(f"  Filtered {initial_count - len(df_bikes)} short trips (< {min_limit} min).")
+        except Exception as e:
+            print(f"  Warning: Filter failed ({e}).")
 
         # --- RUN ANALYSIS ---
         res = ta.analyze_city_data(city_key, config, df_trains, df_bikes, df_logs, df_weather, TRAIN_CATS)
         all_results.extend(res)
 
         # --- RUN VISUALIZATION ---
-        # Note: We re-standardize inside save_heartbeat_plot logic indirectly,
-        # but ta.standard_columns modifies in-place, so it's safe to call here.
         df_trains = ta.standard_columns(df_trains)
-        save_heartbeat_plot(city_key, df_trains, df_bikes, config)
+
+        # 1. Static Heartbeat (Now with Stock)
+        save_heartbeat_plot(city_key, df_trains, df_bikes, df_logs, config)  # <--- Added df_logs
+
+        # 2. Interactive Heartbeat (Now with Stock)
+        save_interactive_heartbeat(city_key, df_trains, df_bikes, df_logs, config)  # <--- Added df_logs
+
+        # 3. Split Violin Sync Plot
+        plot_split_violin(city_key, df_trains, df_bikes, config)
 
     # --- SAVE RESULTS ---
     if all_results:
