@@ -4,196 +4,201 @@ import numpy as np
 from scipy.signal.windows import gaussian
 import os
 import warnings
+import sys
 
 # Suppress warnings
-warnings.filterwarnings("ignore", category=UserWarning)
-
-
-# ==========================================
-# 0. HELPER FUNCTIONS
-# ==========================================
-def standard_columns(df):
-    """Renames Czech columns to standard English names."""
-    rename_map = {
-        'název bodu výběru': 'station', 'číslo vlaku': 'train_no',
-        'druh vlaku': 'train_type', 'název výchozí stanice vlaku': 'origin',
-        'název cílové stanice vlaku': 'destination', 'čas příjezdu': 'actual_arrival',
-        'čas odjezdu': 'actual_departure', 'datum': 'date'
-    }
-    df.columns = [str(c).lower().strip() for c in df.columns]
-    new_cols = {}
-    for col in df.columns:
-        for key, val in rename_map.items():
-            if key in col:
-                new_cols[col] = val
-                break
-    return df.rename(columns=new_cols)
-
-
-def generate_signals(trains, timeline, params):
-    """Generates smoothed pressure signals."""
-    s_arr = pd.Series(0.0, index=timeline)
-    s_dep = pd.Series(0.0, index=timeline)
-    weights = params.get('weights', {'Os': 1, 'Sp': 1, 'R': 1.5, 'Ex': 2})
-
-    for _, train in trains.iterrows():
-        w = weights.get(train.get('train_type', 'Os'), 1.0)
-        if pd.notnull(train.get('actual_arrival')):
-            try:
-                s_arr.at[train['actual_arrival'].round('min')] += w
-            except:
-                pass
-        if pd.notnull(train.get('actual_departure')):
-            try:
-                s_dep.at[train['actual_departure'].round('min')] += w
-            except:
-                pass
-
-    window_size = 30
-    gauss_kernel = gaussian(window_size, std=4)
-    gauss_kernel /= gauss_kernel.sum()
-    s_arr_smooth = pd.Series(np.convolve(s_arr.values, gauss_kernel, mode='same'), index=timeline)
-    s_dep_smooth = pd.Series(np.convolve(s_dep.values, gauss_kernel, mode='same'), index=timeline)
-    return s_arr_smooth, s_dep_smooth
-
+warnings.filterwarnings("ignore")
 
 # ==========================================
-# 1. CONFIGURATION
+# 1. UNIVERSAL CONFIGURATION
 # ==========================================
-NETWORKS = {
+CITIES = {
     'Ostrava-Svinov': {
         'file_trains': 'data/Pohyby_Svinov.xlsx',
+        'file_bikes': 'data/nextbike_data_VSB_Vaclavik.xlsx',
         'file_weather': 'data/Ostrava_pocasi.xlsx',
         'sheet_rentals': 'Vypujcky_Ostrava',
         'train_station': 'Ostrava-Svinov',
-        'bike_stations': ['SV-Svinov nádraží *(navíc 15min na odjezd)'],
-        'params': {'weights': {'Os': 2.0, 'Sp': 1.7, 'R': 1.5, 'Ex': 1}},
-        'vis_start': '2025-09-15 00:00',
-        'vis_end': '2025-10-19 23:59'
+        'bike_stations': ['SV-Svinov nádraží *(navíc 15min na odjezd)']
     },
     'Ostrava hl.n.': {
         'file_trains': 'data/Pohyby_Ostrava_hl.xlsx',
+        'file_bikes': 'data/nextbike_data_VSB_Vaclavik.xlsx',
         'file_weather': 'data/Ostrava_pocasi.xlsx',
         'sheet_rentals': 'Vypujcky_Ostrava',
         'train_station': 'Ostrava hl.n.',
-        'bike_stations': ['MOAP-Hlavní nádraží'],
-        'params': {'weights': {'Os': 2.0, 'Sp': 1.7, 'R': 1.5, 'Ex': 1}},
-        'vis_start': '2025-09-15 00:00',
-        'vis_end': '2025-10-19 23:59'
+        'bike_stations': ['MOAP-Hlavní nádraží']
     },
-    'Brno hl.n.': {
+    'Brno': {
         'file_trains': 'data/Pohyby_Brno.xlsx',
+        'file_bikes': 'data/nextbike_data_VSB_Vaclavik.xlsx',
         'file_weather': 'data/Brno_pocasi.xlsx',
         'sheet_rentals': 'Vypujcky_Brno',
         'train_station': 'Brno hl.n.',
-        'bike_stations': ['Hlavní nádraží - Hlavní vstup', 'Hlavní nádraží - pošta', 'Bajkazyl 666'],
-        'params': {'weights': {'Os': 2.5, 'Sp': 2.0, 'R': 1.5, 'Ex': 1}},
-        'vis_start': '2025-09-15 00:00',
-        'vis_end': '2025-10-19 23:59'
+        'bike_stations': ['Hlavní nádraží - Hlavní vstup', 'Hlavní nádraží - pošta', 'Bajkazyl 666']
     },
     'Prerov': {
         'file_trains': 'data/Pohyby_Prerov.xlsx',
+        'file_bikes': 'data/nextbike_data_VSB_Vaclavik.xlsx',
         'file_weather': 'data/Prerov_pocasi.xlsx',
         'sheet_rentals': 'Vypujcky_Prerov',
         'train_station': 'Přerov os.n.',
-        'bike_stations': ['Nádraží'],
-        'params': {'weights': {'Os': 1.7, 'Sp': 1.4, 'R': 1.2, 'Ex': 1}},
-        'vis_start': '2025-09-15 00:00',
-        'vis_end': '2025-10-19 23:59'
+        'bike_stations': ['Nádraží']
     },
     'ValMez': {
         'file_trains': 'data/Pohyby_ValMez.xlsx',
+        'file_bikes': 'data/nextbike_data_VSB_Vaclavik.xlsx',
         'file_weather': 'data/ValMez_pocasi.xlsx',
         'sheet_rentals': 'Vypujcky_ValMez',
         'train_station': 'Valašské Meziříčí',
-        'bike_stations': ['Vlakové nádraží Valašské Meziříčí (nové umístění)'],
-        'params': {'weights': {'Os': 1.8, 'Sp': 1.6, 'R': 1.4, 'Ex': 1.6}},
-        'vis_start': '2025-09-15 00:00',
-        'vis_end': '2025-10-19 23:59'
+        'bike_stations': ['Vlakové nádraží Valašské Meziříčí (nové umístění)']
     }
 }
 
+VIS_START = '2025-09-15 00:00'
+VIS_END = '2025-10-19 23:59'
+
+SAVE_FOLDER = 'results/3D_heatmaps'
+if not os.path.exists(SAVE_FOLDER): os.makedirs(SAVE_FOLDER)
+
 
 # ==========================================
-# 2. CORE GENERATOR FUNCTION
+# 2. DATA LOADING
 # ==========================================
-def generate_3d_swarm(city_name, config):
-    print(f"\n🚀 Generating 3D Swarm for: {city_name}...")
-
-    # --- A. LOAD DATA ---
+def load_data(cfg):
+    # --- TRAINS ---
     try:
-        # 1. Trains
-        df_preview = pd.read_excel(config['file_trains'], header=None, nrows=20)
-        header_idx = 0
-        for idx, row in df_preview.iterrows():
+        df_p = pd.read_excel(cfg['file_trains'], header=None, nrows=20)
+        h_idx = 0
+        for i, row in df_p.iterrows():
             if any('čas' in str(x).lower() for x in row.values):
-                header_idx = idx
+                h_idx = i
                 break
-        df_trains = pd.read_excel(config['file_trains'], header=header_idx)
-        df_trains = standard_columns(df_trains)
+        df_t = pd.read_excel(cfg['file_trains'], header=h_idx)
 
-        if 'station' in df_trains.columns:
-            df_trains = df_trains[
-                df_trains['station'].astype(str).str.contains(config['train_station'], case=False, na=False)]
+        cols = {}
+        for c in df_t.columns:
+            cl = str(c).lower().strip()
+            if 'příjezdu' in cl:
+                cols[c] = 'arr'
+            elif 'odjezdu' in cl:
+                cols[c] = 'dep'
+            elif 'druh' in cl:
+                cols[c] = 'type'
+            elif 'bod' in cl:
+                cols[c] = 'station'
+        df_t.rename(columns=cols, inplace=True)
 
-        df_trains['actual_arrival'] = pd.to_datetime(df_trains['actual_arrival'], errors='coerce')
-        df_trains['actual_departure'] = pd.to_datetime(df_trains['actual_departure'], errors='coerce')
+        if 'station' in df_t.columns:
+            if isinstance(df_t['station'], pd.DataFrame):
+                st_col = df_t['station'].iloc[:, 0]
+            else:
+                st_col = df_t['station']
+            df_t = df_t[st_col.astype(str).str.contains(cfg['train_station'], case=False, na=False)]
 
-        # 2. Bikes
-        bike_file = config.get('file_bikes', 'data/nextbike_data_VSB_Vaclavik.xlsx')
-        df_bikes = pd.read_excel(bike_file, sheet_name=config['sheet_rentals'])
-        df_bikes.columns = [str(c).lower().strip() for c in df_bikes.columns]
-        df_bikes['start_time'] = pd.to_datetime(df_bikes['start_time'])
-        df_bikes['end_time'] = pd.to_datetime(df_bikes['end_time'])
-
-        # 3. Weather
-        df_weather = pd.read_excel(config['file_weather'])
-        df_weather.columns = [str(c).lower().strip() for c in df_weather.columns]
-
-        t_col = next((c for c in df_weather.columns if any(x in c for x in ['datetime', 'date', 'datum', 'cas'])), None)
-        p_col = next((c for c in df_weather.columns if any(x in c for x in ['rain', 'precip', 'sraz', 'uhrn'])), None)
-
-        if t_col and p_col:
-            df_weather['ts'] = pd.to_datetime(df_weather[t_col], errors='coerce')
-            df_weather['val'] = df_weather[p_col].astype(str).str.replace(',', '.', regex=False)
-            df_weather['val'] = pd.to_numeric(df_weather['val'], errors='coerce').fillna(0)
-            df_weather = df_weather.sort_values('ts')
-        else:
-            print("      ⚠️ Weather columns missing. Skipping rain.")
-            df_weather = pd.DataFrame({'ts': [], 'val': []})
+        df_t['arr'] = pd.to_datetime(df_t['arr'], errors='coerce')
+        df_t['dep'] = pd.to_datetime(df_t['dep'], errors='coerce')
 
     except Exception as e:
-        print(f"   ❌ Error loading data: {e}")
-        return
+        print(f"   ❌ Train Load Error: {e}")
+        return None, None, None
 
-    # --- B. PROCESS TERRAIN ---
-    print("   ...Processing Terrain (1-Min Resolution)")
-    zoom_start = pd.to_datetime(config['vis_start'])
-    zoom_end = pd.to_datetime(config['vis_end'])
+    # --- BIKES ---
+    try:
+        df_b = pd.read_excel(cfg['file_bikes'], sheet_name=cfg['sheet_rentals'])
+        df_b.columns = [str(c).lower().strip() for c in df_b.columns]
 
-    # 1. Timeline
+        valid = [s.lower() for s in cfg['bike_stations']]
+        mask = df_b['start_place'].astype(str).str.lower().isin(valid) | \
+               df_b['end_place'].astype(str).str.lower().isin(valid)
+        df_b = df_b[mask].copy()
+
+        df_b['start_time'] = pd.to_datetime(df_b['start_time'])
+        df_b['end_time'] = pd.to_datetime(df_b['end_time'])
+
+    except Exception as e:
+        print(f"   ❌ Bike Load Error: {e}")
+        return None, None, None
+
+    # --- WEATHER (Fixed Detection) ---
+    try:
+        df_w = pd.read_excel(cfg['file_weather'])
+        df_w.columns = [str(c).lower().strip() for c in df_w.columns]
+
+        t_col = next((c for c in df_w.columns if any(x in c for x in ['date', 'time', 'cas'])), None)
+        p_col = next((c for c in df_w.columns if any(x in c for x in ['rain', 'precip', 'uhrn'])), None)
+
+        if t_col:
+            df_w['ts'] = pd.to_datetime(df_w[t_col])
+        if p_col:
+            df_w['rain'] = pd.to_numeric(df_w[p_col].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
+        else:
+            df_w['rain'] = 0
+            print("   ⚠️ No rain column found (checked 'rain', 'precip', 'uhrn')")
+
+    except:
+        df_w = pd.DataFrame({'ts': [], 'rain': []})
+
+    return df_t, df_b, df_w
+
+
+# ==========================================
+# 3. 3D GENERATOR
+# ==========================================
+def generate_3d_swarm(city, cfg):
+    print(f"\n🚀 Generating 3D Swarm for: {city}...")
+
+    df_t, df_b, df_w = load_data(cfg)
+    if df_t is None: return
+
+    # Define Timeline
+    zoom_start = pd.to_datetime(VIS_START)
+    zoom_end = pd.to_datetime(VIS_END)
     timeline_1min = pd.date_range(zoom_start, zoom_end, freq='1min')
-    t_mask = (df_trains['actual_arrival'] >= zoom_start) & (df_trains['actual_arrival'] <= zoom_end)
-    subset_trains = df_trains[t_mask].copy()
 
-    s_arr, s_dep = generate_signals(subset_trains, timeline_1min, config['params'])
-    sig_total = s_arr + s_dep
+    # --- A. CALCULATE PRESSURE ---
+    print("   ...Calculating High-Res Pressure")
+    s_press = pd.Series(0.0, index=timeline_1min)
+    w_map = {'Os': 2.0, 'Sp': 1.7, 'R': 1.5, 'Ex': 1.0, 'IC': 1.0}
 
-    # 2. Normalize
-    max_pressure = sig_total.max()
-    scaling_factor = 10.0 / max_pressure if max_pressure > 0 else 1.0
-    sig_total_scaled = sig_total * scaling_factor
+    mask_t = (df_t['arr'] >= zoom_start) & (df_t['arr'] <= zoom_end)
+    subset_t = df_t[mask_t]
 
-    # 3. Grid
-    df_grid = pd.DataFrame({'pressure': sig_total_scaled, 'ts': timeline_1min}).set_index('ts')
-    df_grid['date'] = df_grid.index.date
-    df_grid['time_dec'] = df_grid.index.hour + df_grid.index.minute / 60.0
+    for _, r in subset_t.iterrows():
+        w = w_map.get(r.get('type', 'Os'), 1.0)
+        if pd.notnull(r['arr']):
+            try:
+                s_press.at[r['arr'].round('min')] += w
+            except:
+                pass
+        if pd.notnull(r['dep']):
+            try:
+                s_press.at[r['dep'].round('min')] += w
+            except:
+                pass
 
-    z_matrix = df_grid.pivot(index='date', columns='time_dec', values='pressure')
+    gauss = gaussian(30, std=4)
+    gauss /= gauss.sum()
+    s_smooth = pd.Series(np.convolve(s_press.values, gauss, mode='same'), index=timeline_1min)
 
-    # Force Full Grid
-    all_minutes = [h + m / 60.0 for h in range(24) for m in range(60)]
-    z_matrix = z_matrix.reindex(columns=all_minutes, fill_value=0).fillna(0)
+    max_val = s_smooth.max()
+    scale_factor = 10.0 / max_val if max_val > 0 else 1.0
+    s_scaled = s_smooth * scale_factor
+
+    # --- B. CREATE TERRAIN MESH ---
+    print("   ...Building Terrain Mesh")
+
+    # Grid for visuals (15 min)
+    df_grid = pd.DataFrame({'pressure': s_scaled})
+    df_mesh = df_grid.resample('15min').mean()
+
+    df_mesh['date'] = df_mesh.index.date
+    df_mesh['time_dec'] = df_mesh.index.hour + df_mesh.index.minute / 60.0
+
+    z_matrix = df_mesh.pivot(index='date', columns='time_dec', values='pressure')
+
+    all_hours = np.arange(0, 24, 0.25)
+    z_matrix = z_matrix.reindex(columns=all_hours, fill_value=0).fillna(0)
 
     all_dates = pd.date_range(zoom_start.date(), zoom_end.date()).date
     z_matrix = z_matrix.reindex(index=all_dates, fill_value=0).fillna(0)
@@ -201,127 +206,131 @@ def generate_3d_swarm(city_name, config):
     z_values = z_matrix.values
     x_values = z_matrix.columns.values
     y_values = [str(d) for d in z_matrix.index]
-    pressure_lookup = df_grid['pressure']
 
-    # --- C. PROCESS DOTS ---
-    print("   ...Processing Dots")
-    valid_stations = [s.strip().lower() for s in config['bike_stations']]
+    # --- C. PROCESS RAIN LAYER (ROBUST) ---
+    print("   ...Processing Rain Layer")
+    rain_threshold = 0.1  # Lower threshold to capture light rain
+    rain_height = 10.1
 
-    def is_valid_station(series):
-        return series.astype(str).str.strip().str.lower().isin(valid_stations)
+    rain_surface = np.full(z_values.shape, np.nan)  # Start empty (transparent)
 
-    df_bikes_filtered = df_bikes[
-        (is_valid_station(df_bikes['start_place']) | is_valid_station(df_bikes['end_place'])) &
-        (df_bikes['start_time'] >= zoom_start) & (df_bikes['end_time'] <= zoom_end)
-        ].copy()
+    if not df_w.empty:
+        w_cut = df_w[(df_w['ts'] >= zoom_start) & (df_w['ts'] <= zoom_end)]
+        print(f"      -> Max Rain in Window: {w_cut['rain'].max()} mm")
 
-    def get_dots(df, time_col, station_col, z_offset=0.2):
-        subset = df[is_valid_station(df[station_col])].copy()
+        if not w_cut.empty:
+            # 1. Create a Series with same index as 1-min timeline, fill with 0
+            w_series = pd.Series(0.0, index=timeline_1min)
+
+            # 2. Map loaded rain to this timeline
+            # (Round to nearest minute to ensure matching)
+            w_loaded = w_cut.set_index('ts')['rain']
+            w_loaded.index = w_loaded.index.round('min')
+
+            # 3. Update the 1-min timeline with actual rain values
+            w_series.update(w_loaded)
+
+            # 4. Resample to 15-min to match the Grid (Max value in that 15 min block)
+            w_15min = w_series.resample('15min').max()
+
+            # 5. Create DataFrame for pivoting
+            df_rain_grid = pd.DataFrame({'rain': w_15min})
+            df_rain_grid['date'] = df_rain_grid.index.date
+            df_rain_grid['time_dec'] = df_rain_grid.index.hour + df_rain_grid.index.minute / 60.0
+
+            # 6. Pivot exactly like Terrain
+            r_matrix = df_rain_grid.pivot(index='date', columns='time_dec', values='rain')
+            r_matrix = r_matrix.reindex(index=all_dates, columns=all_hours, fill_value=0).fillna(0)
+
+            # 7. Apply Mask
+            is_raining = r_matrix.values > rain_threshold
+            rain_surface[is_raining] = rain_height
+
+            print(f"      -> Painted {np.sum(is_raining)} rain slots (Grid Cells).")
+    else:
+        print("      ⚠️ No weather data available.")
+
+    # --- D. PROCESS DOTS ---
+    print("   ...Placing Dots")
+    valid_st = [s.lower() for s in cfg['bike_stations']]
+
+    def get_dots(df, time_col, station_col, z_add):
+        mask = df[station_col].astype(str).str.lower().isin(valid_st) & \
+               (df[time_col] >= zoom_start) & (df[time_col] <= zoom_end)
+        sub = df[mask]
+
         x, y, z, t = [], [], [], []
-        for _, row in subset.iterrows():
+        for _, row in sub.iterrows():
             ts = row[time_col]
             x.append(ts.hour + ts.minute / 60.0 + ts.second / 3600.0)
             y.append(str(ts.date()))
 
-            lookup = ts.round('min')
-            if lookup in pressure_lookup.index:
-                base = pressure_lookup.loc[lookup]
+            lookup_t = ts.round('min')
+            if lookup_t in s_scaled.index:
+                base_h = s_scaled.loc[lookup_t]
             else:
-                base = 0
+                base_h = 0
 
-            z.append(base + z_offset)
-            t.append(ts.strftime('%H:%M'))
+            z.append(base_h + z_add)
+            t.append(ts.strftime('%d.%m %H:%M'))
         return x, y, z, t
 
-    rx, ry, rz, rt = get_dots(df_bikes_filtered, 'start_time', 'start_place')
-    ex, ey, ez, et = get_dots(df_bikes_filtered, 'end_time', 'end_place')
+    rx, ry, rz, rt = get_dots(df_b, 'start_time', 'start_place', z_add=0.3)
+    ex, ey, ez, et = get_dots(df_b, 'end_time', 'end_place', z_add=0.3)
 
-    # --- D. PROCESS WEATHER ---
-    print("   ...Building Weather Mask")
-    rain_threshold = 0.2
-
-    mask = (df_weather['ts'] >= zoom_start) & (df_weather['ts'] <= zoom_end)
-    df_w_subset = df_weather[mask].copy()
-
-    if not df_w_subset.empty:
-        rain_series = df_w_subset.set_index('ts')['val'].sort_index()
-
-        # DEBUG: Print Max Rain
-        print(f"      -> Max Rain Detected in Data: {rain_series.max()} mm")
-
-        # Resample to 1-Min grid
-        rain_1min = rain_series.resample('1h').max().resample('1min').ffill()
-        rain_aligned = rain_1min.reindex(df_grid.index, fill_value=0)
-
-        # Pivot
-        df_rain_grid = pd.DataFrame({'rain': rain_aligned})
-        df_rain_grid['date'] = df_rain_grid.index.date
-        df_rain_grid['time_dec'] = df_rain_grid.index.hour + df_rain_grid.index.minute / 60.0
-
-        rain_matrix = df_rain_grid.pivot(index='date', columns='time_dec', values='rain')
-        rain_matrix = rain_matrix.reindex(index=all_dates, columns=all_minutes, fill_value=0).fillna(0)
-
-        is_raining = rain_matrix.values > rain_threshold
-
-        rain_surface = np.full(z_values.shape, np.nan)
-        # FORCE RAIN TO BE ABOVE MAX TERRAIN
-        rain_z_height = 10.1
-        rain_surface[is_raining] = rain_z_height
-
-        print(f"      -> Painted {np.sum(is_raining)} rain minutes.")
-    else:
-        rain_surface = np.full(z_values.shape, np.nan)
-        print("      -> No rain data in window.")
-
-    # --- E. PLOT ---
+    # --- E. RENDER ---
     print("   ...Rendering")
     fig = go.Figure()
 
-    # Terrain (Semi-Transparent)
+    # Terrain (Orange)
     fig.add_trace(go.Surface(
         z=z_values, x=x_values, y=y_values,
-        colorscale='Oranges',
-        opacity=0.6,  # <--- TRANSPARENCY FIX
-        name='Pressure',
-        colorbar=dict(title='Pressure (Norm)', x=0, len=0.5)
+        colorscale='Oranges', opacity=0.6, name='Pressure',
+        colorbar=dict(title='Pressure', x=0, len=0.5)
     ))
 
-    # Rain
+    # Rain (Blue)
     fig.add_trace(go.Surface(
         z=rain_surface, x=x_values, y=y_values,
         colorscale=[[0, '#87CEFA'], [1, '#00008B']],
-        opacity=0.4, showscale=False, name=f'Rain > {rain_threshold}mm', hoverinfo='skip'
+        opacity=0.4, showscale=False, name='Rain',
+        hoverinfo='skip'
     ))
 
     # Dots
-    fig.add_trace(
-        go.Scatter3d(x=rx, y=ry, z=rz, mode='markers', marker=dict(size=1.5, color='#2ca02c'), name='Rental', text=rt))
-    fig.add_trace(
-        go.Scatter3d(x=ex, y=ey, z=ez, mode='markers', marker=dict(size=1.5, color='#1f77b4'), name='Return', text=et))
+    fig.add_trace(go.Scatter3d(
+        x=rx, y=ry, z=rz, mode='markers',
+        marker=dict(size=2, color='#2ca02c'),
+        name='Rental', text=rt
+    ))
+    fig.add_trace(go.Scatter3d(
+        x=ex, y=ey, z=ez, mode='markers',
+        marker=dict(size=2, color='#1f77b4'),
+        name='Return', text=et
+    ))
 
     fig.update_layout(
-        title=f"3D Commuter Swarm: {city_name}",
+        title=f"3D Probabilistic Heatmap: {city}",
         scene=dict(
             xaxis_title='Time (Hour)',
             yaxis_title='Date',
-            zaxis_title='Intensity (Norm)',
+            zaxis_title='Intensity',
             xaxis=dict(tickvals=list(range(0, 25, 4))),
             aspectmode='manual',
-            aspectratio=dict(x=1, y=3.0, z=0.6)
+            aspectratio=dict(x=1, y=3.0, z=0.5)
         ),
         margin=dict(l=0, r=0, b=0, t=40),
         height=900
     )
 
-    if not os.path.exists('results'): os.makedirs('results')
-    filename = f"results/3D_Swarm_{city_name.replace(' ', '_').replace('.', '')}.html"
-    fig.write_html(filename)
-    print(f"   ✅ Saved to {filename}")
+    fname = f"{SAVE_FOLDER}/3D_Swarm_{city.replace(' ', '_').replace('.', '')}.html"
+    fig.write_html(fname)
+    print(f"   ✅ Saved to {fname}")
 
 
 # ==========================================
-# 3. EXECUTION
+# 4. EXECUTION
 # ==========================================
 if __name__ == "__main__":
-    for city, cfg in NETWORKS.items():
+    for city, cfg in CITIES.items():
         generate_3d_swarm(city, cfg)

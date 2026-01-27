@@ -1,258 +1,283 @@
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
+import matplotlib.dates as mdates
+import matplotlib.ticker as ticker
+import matplotlib.patches as mpatches  # <--- FIXED IMPORT
 import numpy as np
-import seaborn as sns
 from scipy.signal.windows import gaussian
+import os
+import warnings
+import sys
 
-
-# ==========================================
-# 0. HELPER FUNCTIONS
-# ==========================================
-def standard_columns(df):
-    """Renames Czech columns to standard English names."""
-    rename_map = {
-        'název bodu výběru': 'station', 'číslo vlaku': 'train_no',
-        'druh vlaku': 'train_type', 'název výchozí stanice vlaku': 'origin',
-        'název cílové stanice vlaku': 'destination', 'čas příjezdu': 'actual_arrival',
-        'čas odjezdu': 'actual_departure', 'datum': 'date'
-    }
-    df.columns = [str(c).lower().strip() for c in df.columns]
-    new_cols = {}
-    for col in df.columns:
-        for key, val in rename_map.items():
-            if key in col:
-                new_cols[col] = val
-                break
-    return df.rename(columns=new_cols)
-
-
-def generate_signals(trains, timeline, params):
-    """Generates smoothed pressure signals for Arrivals and Departures."""
-    s_arr = pd.Series(0.0, index=timeline)
-    s_dep = pd.Series(0.0, index=timeline)
-    weights = params.get('weights', {'Os': 1, 'Sp': 1, 'R': 1.5, 'Ex': 2})
-
-    for _, train in trains.iterrows():
-        w = weights.get(train.get('train_type', 'Os'), 1.0)
-        if pd.notnull(train.get('actual_arrival')):
-            try:
-                s_arr.at[train['actual_arrival'].round('min')] += w
-            except:
-                pass
-        if pd.notnull(train.get('actual_departure')):
-            try:
-                s_dep.at[train['actual_departure'].round('min')] += w
-            except:
-                pass
-
-    # Gaussian smoothing
-    window_size = 30
-    gauss_kernel = gaussian(window_size, std=4)
-    gauss_kernel /= gauss_kernel.sum()
-    s_arr_smooth = pd.Series(np.convolve(s_arr.values, gauss_kernel, mode='same'), index=timeline)
-    s_dep_smooth = pd.Series(np.convolve(s_dep.values, gauss_kernel, mode='same'), index=timeline)
-    return s_arr_smooth, s_dep_smooth
-
+# Suppress warnings
+warnings.filterwarnings("ignore")
 
 # ==========================================
-# 1. CONFIGURATION
+# 1. UNIVERSAL CONFIGURATION
 # ==========================================
-CITY_KEY = 'Ostrava-Svinov'
-VIS_START = '2025-09-15'
-VIS_END = '2025-10-19'
-
-FILE_TRAINS = 'data/Pohyby_Svinov.xlsx'
-FILE_BIKES = 'data/nextbike_data_VSB_Vaclavik.xlsx'
-SHEET_RENTALS = 'Vypujcky_Ostrava'
-
-STATION_CONFIG = {
-    'train_station': 'Ostrava-Svinov',
-    'bike_stations': ['SV-Svinov nádraží *(navíc 15min na odjezd)'],
-    'params': {
-        'weights': {'Os': 2.0, 'Sp': 1.7, 'R': 1.5, 'Ex': 1}
+CITIES = {
+    'Ostrava-Svinov': {
+        'file_trains': 'data/Pohyby_Svinov.xlsx',
+        'file_bikes': 'data/nextbike_data_VSB_Vaclavik.xlsx',
+        'file_weather': 'data/Ostrava_pocasi.xlsx',
+        'sheet_rentals': 'Vypujcky_Ostrava',
+        'train_station': 'Ostrava-Svinov',
+        'bike_stations': ['SV-Svinov nádraží *(navíc 15min na odjezd)']
+    },
+    'Ostrava hl.n.': {
+        'file_trains': 'data/Pohyby_Ostrava_hl.xlsx',
+        'file_bikes': 'data/nextbike_data_VSB_Vaclavik.xlsx',
+        'file_weather': 'data/Ostrava_pocasi.xlsx',
+        'sheet_rentals': 'Vypujcky_Ostrava',
+        'train_station': 'Ostrava hl.n.',
+        'bike_stations': ['MOAP-Hlavní nádraží']
+    },
+    'Brno': {
+        'file_trains': 'data/Pohyby_Brno.xlsx',
+        'file_bikes': 'data/nextbike_data_VSB_Vaclavik.xlsx',
+        'file_weather': 'data/Brno_pocasi.xlsx',
+        'sheet_rentals': 'Vypujcky_Brno',
+        'train_station': 'Brno hl.n.',
+        'bike_stations': ['Hlavní nádraží - Hlavní vstup', 'Hlavní nádraží - pošta', 'Bajkazyl 666']
+    },
+    'Prerov': {
+        'file_trains': 'data/Pohyby_Prerov.xlsx',
+        'file_bikes': 'data/nextbike_data_VSB_Vaclavik.xlsx',
+        'file_weather': 'data/Prerov_pocasi.xlsx',
+        'sheet_rentals': 'Vypujcky_Prerov',
+        'train_station': 'Přerov os.n.',
+        'bike_stations': ['Nádraží']
+    },
+    'ValMez': {
+        'file_trains': 'data/Pohyby_ValMez.xlsx',
+        'file_bikes': 'data/nextbike_data_VSB_Vaclavik.xlsx',
+        'file_weather': 'data/ValMez_pocasi.xlsx',
+        'sheet_rentals': 'Vypujcky_ValMez',
+        'train_station': 'Valašské Meziříčí',
+        'bike_stations': ['Vlakové nádraží Valašské Meziříčí (nové umístění)']
     }
 }
+
+VIS_START = '2025-09-15 00:00'
+VIS_END = '2025-10-19 23:59'
+
+SAVE_FOLDER = 'results/2D_heatmaps'
+if not os.path.exists(SAVE_FOLDER): os.makedirs(SAVE_FOLDER)
+
 
 # ==========================================
 # 2. DATA LOADING
 # ==========================================
-print(f"📊 Generating Flow Balance Map for {CITY_KEY}...")
+def load_data(cfg):
+    try:
+        # TRAINS
+        df_p = pd.read_excel(cfg['file_trains'], header=None, nrows=20)
+        h_idx = 0
+        for i, row in df_p.iterrows():
+            if any('čas' in str(x).lower() for x in row.values):
+                h_idx = i
+                break
+        df_t = pd.read_excel(cfg['file_trains'], header=h_idx)
 
-# Load Trains
-try:
-    df_preview = pd.read_excel(FILE_TRAINS, header=None, nrows=20)
-    header_idx = 0
-    for idx, row in df_preview.iterrows():
-        row_str = row.astype(str).str.lower().values
-        if any('čas' in x or 'cas' in x or 'druh' in x for x in row_str):
-            header_idx = idx
-            break
-    df_trains = pd.read_excel(FILE_TRAINS, header=header_idx)
-    df_trains = standard_columns(df_trains)
-    df_trains['actual_arrival'] = pd.to_datetime(df_trains['actual_arrival'], errors='coerce')
-    df_trains['actual_departure'] = pd.to_datetime(df_trains['actual_departure'], errors='coerce')
-except Exception as e:
-    print(f"Error loading trains: {e}")
-    exit()
+        cols = {}
+        for c in df_t.columns:
+            cl = str(c).lower().strip()
+            if 'příjezdu' in cl:
+                cols[c] = 'arr'
+            elif 'odjezdu' in cl:
+                cols[c] = 'dep'
+            elif 'druh' in cl:
+                cols[c] = 'type'
+            elif 'bod' in cl:
+                cols[c] = 'station'
+        df_t.rename(columns=cols, inplace=True)
 
-# Load Bikes
-df_bikes = pd.read_excel(FILE_BIKES, sheet_name=SHEET_RENTALS)
-df_bikes.columns = [str(c).lower().strip() for c in df_bikes.columns]
-df_bikes['start_time'] = pd.to_datetime(df_bikes['start_time'])
-df_bikes['end_time'] = pd.to_datetime(df_bikes['end_time'])
+        if 'station' in df_t.columns:
+            if isinstance(df_t['station'], pd.DataFrame):
+                st_col = df_t['station'].iloc[:, 0]
+            else:
+                st_col = df_t['station']
+            df_t = df_t[st_col.astype(str).str.contains(cfg['train_station'], case=False, na=False)]
 
-# ==========================================
-# 3. DATA PROCESSING
-# ==========================================
-zoom_start = pd.to_datetime(VIS_START)
-zoom_end = pd.to_datetime(VIS_END)
-timeline_1min = pd.date_range(zoom_start, zoom_end, freq='1min')
+        df_t['arr'] = pd.to_datetime(df_t['arr'], errors='coerce')
+        df_t['dep'] = pd.to_datetime(df_t['dep'], errors='coerce')
 
-# --- A. Prepare Background Heatmap (Train Pressure) ---
-t_mask = (df_trains['actual_arrival'] >= zoom_start) & (df_trains['actual_arrival'] <= zoom_end)
-subset_trains = df_trains[t_mask].copy()
+        # BIKES
+        df_b = pd.read_excel(cfg['file_bikes'], sheet_name=cfg['sheet_rentals'])
+        df_b.columns = [str(c).lower().strip() for c in df_b.columns]
+        valid = [s.lower() for s in cfg['bike_stations']]
+        mask = df_b['start_place'].astype(str).str.lower().isin(valid) | \
+               df_b['end_place'].astype(str).str.lower().isin(valid)
+        df_b = df_b[mask].copy()
+        df_b['start_time'] = pd.to_datetime(df_b['start_time'])
+        df_b['end_time'] = pd.to_datetime(df_b['end_time'])
 
-# Generate Signal
-s_arr, s_dep = generate_signals(subset_trains, timeline_1min, STATION_CONFIG['params'])
-sig_total = s_arr + s_dep
+        # WEATHER
+        try:
+            df_w = pd.read_excel(cfg['file_weather'])
+            df_w.columns = [str(c).lower().strip() for c in df_w.columns]
+            t_col = next((c for c in df_w.columns if any(x in c for x in ['date', 'time', 'cas'])), None)
+            p_col = next((c for c in df_w.columns if any(x in c for x in ['rain', 'precip', 'uhrn'])), None)
+            if t_col: df_w['ts'] = pd.to_datetime(df_w[t_col])
+            if p_col:
+                df_w['rain'] = pd.to_numeric(df_w[p_col].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
+            else:
+                df_w['rain'] = 0
+        except:
+            df_w = pd.DataFrame()
 
-# Create Matrix (Resample to 15min)
-df_sig = pd.DataFrame({'pressure': sig_total, 'ts': timeline_1min})
-df_sig = df_sig.set_index('ts').resample('15min').mean()
-df_sig['date'] = df_sig.index.date
-df_sig['time_dec'] = df_sig.index.hour + df_sig.index.minute / 60.0
+        return df_t, df_b, df_w
+    except Exception as e:
+        print(f"Error: {e}")
+        return None, None, None
 
-# Pivot: Rows=Time, Cols=Date
-heatmap_data = df_sig.pivot(index='time_dec', columns='date', values='pressure').sort_index(ascending=True)
-
-# --- B. Prepare Foreground Pie Clusters (Bike Flow) ---
-BIN_SIZE = '15min'
-
-# Filter bikes to station and window
-b_starts = df_bikes[(df_bikes['start_time'] >= zoom_start) & (df_bikes['start_time'] <= zoom_end) &
-                    (df_bikes['start_place'].isin(STATION_CONFIG['bike_stations']))]
-b_ends = df_bikes[(df_bikes['end_time'] >= zoom_start) & (df_bikes['end_time'] <= zoom_end) &
-                  (df_bikes['end_place'].isin(STATION_CONFIG['bike_stations']))]
-
-# Create "Events" DataFrame for clustering
-events = []
-for t in b_starts['start_time']: events.append({'time': t, 'type': 'rental'})
-for t in b_ends['end_time']: events.append({'time': t, 'type': 'return'})
-df_events = pd.DataFrame(events)
-
-if df_events.empty:
-    print("No bike events found in this window/station.")
-    exit()
-
-# Binning
-df_events['bin_time'] = df_events['time'].dt.round(BIN_SIZE)
-cluster_counts = df_events.groupby(['bin_time', 'type']).size().unstack(fill_value=0)
-
-# Ensure columns exist
-if 'rental' not in cluster_counts.columns: cluster_counts['rental'] = 0
-if 'return' not in cluster_counts.columns: cluster_counts['return'] = 0
-cluster_counts['total'] = cluster_counts['rental'] + cluster_counts['return']
-cluster_counts = cluster_counts[cluster_counts['total'] > 0]
 
 # ==========================================
-# 4. PLOTTING
+# 3. 2D RASTER GENERATOR
 # ==========================================
-fig = plt.figure(figsize=(24, 12))
-ax = plt.subplot(111)
+def generate_2d_raster(city, cfg):
+    print(f"\n🚀 Generating 2D Raster for: {city}...")
 
-# --- A. DRAW HEATMAP (Background) ---
-# Use seaborn for the grid. Note: This sets the axis coordinates to 0, 1, 2...
-sns.heatmap(heatmap_data, ax=ax, cmap='Oranges', cbar_kws={'label': 'Train Passenger Pressure'}, alpha=0.6)
+    df_t, df_b, df_w = load_data(cfg)
+    if df_t is None: return
 
-# --- B. DRAW PIE CHART MARKERS (Foreground) ---
-# We must map Date/Time to the Heatmap's coordinate system
-# X-Axis: 0.5, 1.5, ... corresponding to columns (dates)
-# Y-Axis: 0 to N rows (time).
-# Heatmap rows are indices of `heatmap_data`.
-# We need to calculate which row index corresponds to a specific hour.
+    zoom_start = pd.to_datetime(VIS_START)
+    zoom_end = pd.to_datetime(VIS_END)
 
-unique_dates = heatmap_data.columns
-date_map = {d: i + 0.5 for i, d in enumerate(unique_dates)}
+    # 1. Timeline & Grid
+    timeline_1min = pd.date_range(zoom_start, zoom_end, freq='1min')
 
-# Time Mapping:
-# heatmap_data index is 'time_dec' (e.g. 0.0, 0.25, 0.5 ... 23.75)
-# We need to find the integer row location for a given time
-time_index_map = {t: i for i, t in enumerate(heatmap_data.index)}
+    # 2. Pressure Calc
+    print("   ...Calculating Pressure")
+    s_press = pd.Series(0.0, index=timeline_1min)
+    w_map = {'Os': 2.0, 'Sp': 1.7, 'R': 1.5, 'Ex': 1.0, 'IC': 1.0}
 
-for ts, row in cluster_counts.iterrows():
-    d = ts.date()
+    mask_t = (df_t['arr'] >= zoom_start) & (df_t['arr'] <= zoom_end)
+    for _, r in df_t[mask_t].iterrows():
+        w = w_map.get(r.get('type', 'Os'), 1.0)
+        if pd.notnull(r['arr']):
+            try:
+                s_press.at[r['arr'].round('min')] += w
+            except:
+                pass
+        if pd.notnull(r['dep']):
+            try:
+                s_press.at[r['dep'].round('min')] += w
+            except:
+                pass
 
-    # 1. Get X Coordinate
-    if d not in date_map: continue
-    x_pos = date_map[d]
+    gauss = gaussian(30, std=4)
+    gauss /= gauss.sum()
+    s_smooth = pd.Series(np.convolve(s_press.values, gauss, mode='same'), index=timeline_1min)
 
-    # 2. Get Y Coordinate
-    # Find closest time bin in heatmap index
-    t_dec = ts.hour + ts.minute / 60.0
-    # Round to nearest 0.25 (since we resampled to 15min)
-    t_rounded = round(t_dec * 4) / 4
-    if t_rounded >= 24.0: t_rounded = 23.75  # Cap at midnight
+    # Normalize
+    s_norm = s_smooth / s_smooth.max() if s_smooth.max() > 0 else s_smooth
 
-    if t_rounded in time_index_map:
-        y_pos = time_index_map[t_rounded] + 0.5  # Center in cell
-    else:
-        continue
+    # 3. Prepare Heatmap Matrix
+    print("   ...Building Matrix")
+    # Resample to 5-min for display performance
+    s_res = s_norm.resample('5min').mean()
 
-    # 3. Data for Pie
-    n_rentals = row['rental']
-    total = row['total']
+    df_grid = pd.DataFrame({'pressure': s_res})
+    df_grid['date'] = df_grid.index.date
+    df_grid['time_dec'] = df_grid.index.hour + df_grid.index.minute / 60.0
 
-    # 4. Size Scaling (Square root scaling for area)
-    # Adjust multiplier (0.35) to change max bubble size
-    radius = 0.35 * (total ** 0.5)
-    if radius > 0.8: radius = 0.8  # Prevent overlapping columns
+    pivot_press = df_grid.pivot(index='date', columns='time_dec', values='pressure').fillna(0)
 
-    # --- DRAWING ---
-    # 1. Base Circle (Returns/Blue) - representing the "whole" if it was 100% returns
-    # We use zorder to ensure it sits on top of heatmap
-    circle = mpatches.Circle((x_pos, y_pos), radius, facecolor='#1f77b4', edgecolor='white', linewidth=0.5, zorder=10)
-    ax.add_patch(circle)
+    # Force full ranges
+    all_dates = pd.date_range(zoom_start.date(), zoom_end.date()).date
+    all_times = np.arange(0, 24, 5 / 60.0)  # 5 min steps
 
-    # 2. Wedge (Rentals/Green)
-    if n_rentals > 0:
-        ratio = n_rentals / total
-        theta = 360 * ratio
-        # Draw wedge starting from top (90 deg) going counter-clockwise
-        wedge = mpatches.Wedge((x_pos, y_pos), radius, 90, 90 + theta, facecolor='#2ca02c', zorder=11)
-        ax.add_patch(wedge)
+    pivot_press = pivot_press.reindex(index=all_dates).reindex(columns=all_times).fillna(0)
 
-# --- C. FORMATTING ---
-# X-Axis Labels (Dates)
-ax.set_xticks(np.arange(len(unique_dates)) + 0.5)
-ax.set_xticklabels([d.strftime('%a %d.%m') for d in unique_dates], rotation=45, ha='right')
-ax.set_xlabel("")
+    # 4. Prepare Rain Overlay
+    rain_mask = np.zeros_like(pivot_press.values)
+    if not df_w.empty:
+        w_cut = df_w[(df_w['ts'] >= zoom_start) & (df_w['ts'] <= zoom_end)]
+        if not w_cut.empty:
+            w_series = w_cut.set_index('ts')['rain'].resample('5min').max()
+            df_r = pd.DataFrame({'rain': w_series})
+            df_r['date'] = df_r.index.date
+            df_r['time_dec'] = df_r.index.hour + df_r.index.minute / 60.0
 
-# Y-Axis Labels (Times)
-# Show a tick every 4 hours.
-# 4 hours = 16 slots (since 15min bins)
-y_ticks = np.arange(0, len(heatmap_data), 16)
-y_labels = [f"{int(t):02d}:00" for t in heatmap_data.index[y_ticks]]
-ax.set_yticks(y_ticks)
-ax.set_yticklabels(y_labels, rotation=0)
-ax.set_ylabel("Time of Day")
-ax.invert_yaxis()  # Ensure 00:00 is at top if desired (Standard heatmap is usually 0 at bottom, check preference)
-# Actually, seaborn heatmap 0 index is at TOP by default. So 00:00 is Top.
-# Let's NOT invert, otherwise 00:00 goes to bottom.
+            piv_rain = df_r.pivot(index='date', columns='time_dec', values='rain')
+            piv_rain = piv_rain.reindex(index=all_dates).reindex(columns=all_times).fillna(0)
 
-# Title & Legend
-plt.title(f"Commuter Flow Balance: {CITY_KEY}\n(Background: Train Pressure | Pie Charts: Green=Rentals, Blue=Returns)",
-          fontsize=16)
+            rain_mask = np.where(piv_rain.values > 0.1, 1, 0)
 
-legend_elements = [
-    mpatches.Patch(facecolor='#2ca02c', edgecolor='white', label='Rentals (Outflow)'),
-    mpatches.Patch(facecolor='#1f77b4', edgecolor='white', label='Returns (Inflow)'),
-    plt.scatter([], [], s=150, c='gray', alpha=0.5, label='Size = Traffic Volume')
-]
-ax.legend(handles=legend_elements, loc='upper right', frameon=True, facecolor='white', framealpha=0.9)
+    # 5. Prepare Bike Dots
+    print("   ...Mapping Dots")
+    valid_st = [s.lower() for s in cfg['bike_stations']]
 
-plt.tight_layout()
-output_file = f'results/Flow_Balance_Map_{CITY_KEY}.png'
-plt.savefig(output_file, dpi=300)
-print(f"✅ Saved Flow Balance Map to {output_file}")
-plt.show()
+    def get_coords(df, time_col, station_col):
+        mask = df[station_col].astype(str).str.lower().isin(valid_st) & \
+               (df[time_col] >= zoom_start) & (df[time_col] <= zoom_end)
+        sub = df[mask]
+
+        x = sub[time_col].dt.hour + sub[time_col].dt.minute / 60.0
+        date_map = {d: i for i, d in enumerate(all_dates)}
+        y = sub[time_col].dt.date.map(date_map)
+
+        valid = y.notna()
+        return x[valid], y[valid]
+
+    rx, ry = get_coords(df_b, 'start_time', 'start_place')
+    ex, ey = get_coords(df_b, 'end_time', 'end_place')
+
+    # 6. PLOTTING
+    print("   ...Rendering")
+    fig, ax = plt.subplots(figsize=(15, len(all_dates) * 0.3 + 2))
+
+    # Heatmap
+    im = ax.imshow(pivot_press.values, aspect='auto', cmap='Oranges',
+                   extent=[0, 24, len(all_dates), 0], vmin=0, vmax=1)
+
+    # Rain Overlay
+    rain_img = np.zeros((rain_mask.shape[0], rain_mask.shape[1], 4))
+    rain_img[rain_mask == 1] = [0, 0, 0.8, 0.3]
+    ax.imshow(rain_img, aspect='auto', extent=[0, 24, len(all_dates), 0])
+
+    # Dots (Centered on rows)
+    ax.scatter(rx, ry + 0.5, s=15, color='#2ca02c', label='Rentals', edgecolors='white', linewidth=0.3)
+    ax.scatter(ex, ey + 0.5, s=15, color='#1f77b4', label='Returns', edgecolors='white', linewidth=0.3)
+
+    # Formatting
+    ax.set_xlim(0, 24)
+    ax.set_ylim(len(all_dates), 0)
+
+    ax.set_xticks(range(0, 25, 2))
+    ax.set_xticklabels([f"{h:02d}:00" for h in range(0, 25, 2)])
+    ax.set_xlabel("Time of Day")
+
+    ax.set_yticks(np.arange(len(all_dates)) + 0.5)
+    ax.set_yticklabels([d.strftime('%a %d.%m') for d in all_dates], fontsize=9)
+
+    ax.grid(which='major', axis='x', linestyle=':', alpha=0.3, color='black')
+    ax.vlines(range(24), 0, len(all_dates), colors='black', linestyles=':', alpha=0.1)
+
+    plt.title(f"Transport Rhythm: {city}\nOrange=Train Pressure | Blue Zones=Rain | Dots=Bikes",
+              fontsize=14, fontweight='bold', pad=15)
+
+    # Custom Legend (FIXED)
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='w', markerfacecolor='#2ca02c', label='Bike Rental'),
+        Line2D([0], [0], marker='o', color='w', markerfacecolor='#1f77b4', label='Bike Return'),
+        mpatches.Patch(facecolor='orange', label='High Train Traffic'),  # <--- USING mpatches
+        mpatches.Patch(facecolor='blue', alpha=0.3, label='Rain Event'),  # <--- USING mpatches
+    ]
+    ax.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, -0.05), ncol=4)
+
+    plt.tight_layout()
+    fname = f"{SAVE_FOLDER}/2D_Raster_{city.replace(' ', '_')}.png"
+    plt.savefig(fname, dpi=200)
+    print(f"   ✅ Saved {fname}")
+    plt.close()
+
+
+# ==========================================
+# 4. EXECUTION
+# ==========================================
+if __name__ == "__main__":
+    for city, cfg in CITIES.items():
+        generate_2d_raster(city, cfg)
