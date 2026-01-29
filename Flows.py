@@ -1,10 +1,16 @@
 import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
+import os  # <--- Added to handle directories
 
 # ==========================================
 # 1. SETUP & DATA
 # ==========================================
+# Define output directory
+OUTPUT_DIR = os.path.join("results", "maps")
+# Create directory if it doesn't exist
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
 file_path = 'C:/Users/vaclavikmartin/PycharmProjects/Nextbike/data/nextbike_data_VSB_Vaclavik.xlsx'
 
 # Station Names
@@ -79,10 +85,8 @@ def get_arrow_head(lat1, lon1, lat2, lon2, size_scale=0.00015):
 def add_traces_to_fig(fig, hub_name, partner_data, h_lat, h_lng, traces_list):
     """Calculates lines and arrows for a specific hub-partner pair"""
     for p in partner_data['partner'].unique():
-        # Skip self-loops if partner is the hub itself (rare data error)
         if p == hub_name: continue
 
-        # Get Partner Coords
         try:
             pr = all_trips[all_trips['start_place'] == p].iloc[0]
             p_lat, p_lng = pr[col_lat_start], pr[col_lng_start]
@@ -93,13 +97,11 @@ def add_traces_to_fig(fig, hub_name, partner_data, h_lat, h_lng, traces_list):
             except:
                 continue
 
-        # 20km Filter
         if calculate_distance_km(h_lat, h_lng, p_lat, p_lng) > 20: continue
 
         out_c = len(partner_data[(partner_data['start_place'] == hub_name) & (partner_data['end_place'] == p)])
         in_c = len(partner_data[(partner_data['start_place'] == p) & (partner_data['end_place'] == hub_name)])
 
-        # Outbound (Blue)
         if out_c > 0:
             (sl, slo), (el, elo) = get_offset_geo(h_lat, h_lng, p_lat, p_lng, 25)
             traces_list.append(go.Scattermap(
@@ -112,7 +114,6 @@ def add_traces_to_fig(fig, hub_name, partner_data, h_lat, h_lng, traces_list):
                 go.Scattermap(mode="lines", lat=ay, lon=ax, line=dict(width=2, color='#00BFFF'), hoverinfo='skip',
                               showlegend=False))
 
-        # Inbound (Pink)
         if in_c > 0:
             (sl, slo), (el, elo) = get_offset_geo(p_lat, p_lng, h_lat, h_lng, 25)
             traces_list.append(go.Scattermap(
@@ -125,7 +126,6 @@ def add_traces_to_fig(fig, hub_name, partner_data, h_lat, h_lng, traces_list):
                 go.Scattermap(mode="lines", lat=ay, lon=ax, line=dict(width=2, color='#FF1493'), hoverinfo='skip',
                               showlegend=False))
 
-        # Partner Node
         traces_list.append(go.Scattermap(
             mode="markers+text", lat=[p_lat], lon=[p_lng],
             marker=dict(size=6, color='white'), text=p, textposition="top center",
@@ -155,29 +155,16 @@ def generate_standard_map(center_station, file_label, folder_prefix=""):
     subset['partner'] = subset.apply(
         lambda x: x['end_place'] if x['start_place'] == center_station else x['start_place'], axis=1)
 
-    # Top 20 Logic
     counts = subset['partner'].value_counts()
     top20_list = counts.head(20).index.tolist()
 
-    # We create two groups of traces: [Top 20 Only, All Stations]
     traces_top20 = []
     traces_other = []
-
-    # Calculate traces
-    # Note: We re-filter subset for Top 20 logic in the display, but we calculate ALL first.
-
-    # Actually, simpler logic:
-    # 1. Generate ALL traces.
-    # 2. Sort them into two buckets based on partner name.
 
     temp_traces_top = []
     temp_traces_other = []
 
-    # We use our helper function but need to modify it slightly to separate traces
-    # or just replicate loop here for clarity on grouping.
-
     for p in subset['partner'].unique():
-        # Same geometry logic as before
         try:
             pr = all_trips[all_trips['start_place'] == p].iloc[0]
             p_lat, p_lng = pr[col_lat_start], pr[col_lng_start]
@@ -219,7 +206,6 @@ def generate_standard_map(center_station, file_label, folder_prefix=""):
             go.Scattermap(mode="markers+text", lat=[p_lat], lon=[p_lng], marker=dict(size=6, color='white'), text=p,
                           textposition="top center", textfont=dict(size=9, color="#ccc"), showlegend=False))
 
-    # Hub Dot
     hub_dot = go.Scattermap(
         mode="markers+text", lat=[h_lat], lon=[h_lng],
         marker=dict(size=25, color='#FFD700', symbol='star'),
@@ -228,9 +214,8 @@ def generate_standard_map(center_station, file_label, folder_prefix=""):
         name="Hub"
     )
     temp_traces_top.append(hub_dot)
-    temp_traces_other.append(hub_dot)  # Add to both so it's always visible
+    temp_traces_other.append(hub_dot)
 
-    # Build Figure
     fig = go.Figure()
     for t in temp_traces_top: fig.add_trace(t)
     for t in temp_traces_other: fig.add_trace(t)
@@ -238,11 +223,9 @@ def generate_standard_map(center_station, file_label, folder_prefix=""):
     n_top = len(temp_traces_top)
     n_other = len(temp_traces_other)
 
-    # Visibilities
     vis_top = [True] * n_top + [False] * n_other
     vis_all = [True] * (n_top + n_other)
 
-    # Default to Top 20
     for i in range(len(fig.data)): fig.data[i].visible = vis_top[i]
 
     fig.update_layout(
@@ -259,7 +242,8 @@ def generate_standard_map(center_station, file_label, folder_prefix=""):
         margin=dict(l=0, r=0, t=50, b=0), height=800
     )
 
-    fname = f"{folder_prefix}Map_{file_label}.html"
+    # UPDATED: Save to OUTPUT_DIR
+    fname = os.path.join(OUTPUT_DIR, f"{folder_prefix}Map_{file_label}.html")
     fig.write_html(fname)
     print(f"Saved: {fname}")
 
@@ -271,15 +255,10 @@ def generate_brno_combined_separate_nodes():
     print("--- Generating Map: Brno Combined (Separate Nodes) ---")
 
     fig = go.Figure()
-
-    # Collect all traces
     all_traces = []
-
-    # Calculate Center for Map View
     lats, lngs = [], []
 
     for hub in BRNO_STATIONS:
-        # Hub Coords
         try:
             r = all_trips[all_trips['start_place'] == hub].iloc[0]
             h_lat, h_lng = r[col_lat_start], r[col_lng_start]
@@ -288,14 +267,12 @@ def generate_brno_combined_separate_nodes():
         except:
             continue
 
-        # Filter Data
         subset = all_trips[(all_trips['start_place'] == hub) | (all_trips['end_place'] == hub)].copy()
         subset['partner'] = subset.apply(lambda x: x['end_place'] if x['start_place'] == hub else x['start_place'],
                                          axis=1)
 
         add_traces_to_fig(fig, hub, subset, h_lat, h_lng, all_traces)
 
-        # Hub Node
         all_traces.append(go.Scattermap(
             mode="markers+text", lat=[h_lat], lon=[h_lng],
             marker=dict(size=15, color='#FFD700'),
@@ -305,7 +282,6 @@ def generate_brno_combined_separate_nodes():
 
     for t in all_traces: fig.add_trace(t)
 
-    # Calculate Zoom Center
     c_lat, c_lng = np.mean(lats), np.mean(lngs)
 
     fig.update_layout(
@@ -314,8 +290,10 @@ def generate_brno_combined_separate_nodes():
         map=dict(style="carto-darkmatter", center=dict(lat=c_lat, lon=c_lng), zoom=14),
         margin=dict(l=0, r=0, t=50, b=0), height=900
     )
-    fig.write_html("Brno_Combined_SeparateNodes.html")
-    print("Saved: Brno_Combined_SeparateNodes.html")
+    # UPDATED: Save to OUTPUT_DIR
+    fname = os.path.join(OUTPUT_DIR, "Brno_Combined_SeparateNodes.html")
+    fig.write_html(fname)
+    print(f"Saved: {fname}")
 
 
 # ==========================================
@@ -327,11 +305,9 @@ def generate_brno_clustered():
     cluster_name = "Brno Master Hub"
     temp_df = all_trips.copy()
 
-    # Merge Names
     temp_df.loc[temp_df['start_place'].isin(BRNO_STATIONS), 'start_place'] = cluster_name
     temp_df.loc[temp_df['end_place'].isin(BRNO_STATIONS), 'end_place'] = cluster_name
 
-    # Calculate Centroid
     c_data = all_trips[all_trips['start_place'].isin(BRNO_STATIONS)]
     c_lat, c_lng = c_data[col_lat_start].mean(), c_data[col_lng_start].mean()
 
@@ -339,7 +315,6 @@ def generate_brno_clustered():
 
 
 def generate_standard_map_clustered_logic(dataframe, center_name, h_lat, h_lng, filename):
-    # This is a specialized version of standard_map that takes a modified dataframe
     subset = dataframe[(dataframe['start_place'] == center_name) | (dataframe['end_place'] == center_name)].copy()
     subset['partner'] = subset.apply(lambda x: x['end_place'] if x['start_place'] == center_name else x['start_place'],
                                      axis=1)
@@ -352,8 +327,6 @@ def generate_standard_map_clustered_logic(dataframe, center_name, h_lat, h_lng, 
 
     for p in subset['partner'].unique():
         if p == center_name: continue
-        # Find coords from ORIGINAL all_trips to be safe, or dataframe
-        # We need to look up 'p' in all_trips because 'p' might be a regular station
         try:
             pr = all_trips[all_trips['start_place'] == p].iloc[0]
             p_lat, p_lng = pr[col_lat_start], pr[col_lng_start]
@@ -428,13 +401,17 @@ def generate_standard_map_clustered_logic(dataframe, center_name, h_lat, h_lng, 
         margin=dict(l=0, r=0, t=50, b=0), height=800
     )
 
-    fig.write_html(f"{filename}.html")
-    print(f"Saved: {filename}.html")
+    # UPDATED: Save to OUTPUT_DIR
+    fname = os.path.join(OUTPUT_DIR, f"{filename}.html")
+    fig.write_html(fname)
+    print(f"Saved: {fname}")
 
 
 # ==========================================
 # 7. EXECUTION
 # ==========================================
+
+print(f"--- Outputting maps to: {OUTPUT_DIR} ---")
 
 # 1. Brno: 3 Separate Maps (Individual Stations)
 for station in BRNO_STATIONS:
@@ -453,4 +430,4 @@ generate_standard_map(STATION_MOAP, "Ostrava_MOAP")
 generate_standard_map(STATION_VALMEZ, "Valasske_Mezirici")
 generate_standard_map(STATION_PREROV, "Prerov")
 
-print("\nAll maps generated successfully!")
+print(f"\nAll maps generated successfully in {OUTPUT_DIR}!")

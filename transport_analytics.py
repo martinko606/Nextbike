@@ -282,7 +282,7 @@ def analyze_city_data(city_name, config, df_trains, df_bikes, df_logs, df_weathe
 
     hours = timeline.hour
     mask_am_rush = (hours >= 6) & (hours < 9)
-    mask_pm_rush = (hours >= 15) & (hours < 18)
+    mask_pm_rush = (hours >= 14) & (hours < 18)
 
     mask_workday_am = mask_workday & mask_am_rush
     mask_workday_pm = mask_workday & mask_pm_rush
