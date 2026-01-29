@@ -139,86 +139,6 @@ TRAIN_CATS = {
 # 3. VISUALIZATION FUNCTIONS (Fixed: Total Pressure & Scaling)
 # ==========================================
 
-def save_heartbeat_plot(city_name, trains, bikes, logs, config):
-    """
-    Generates Static Flow Plot (Rentals UP vs Returns DOWN).
-    Fixes:
-    1. Uses TOTAL Pressure (Arr + Dep) so afternoon rush is visible.
-    2. Auto-scales Y-axis to fit the pressure peaks perfectly.
-    """
-    if 'vis_start' not in config: return
-
-    print(f"  > Saving Heartbeat Plot for {city_name}...")
-    start_str, end_str = config['vis_start'], config['vis_end']
-    zoom_start, zoom_end = pd.to_datetime(start_str), pd.to_datetime(end_str)
-
-    # Use 15-min bins for cleaner static bars
-    resample_rate = '15min'
-    timeline_res = pd.date_range(zoom_start, zoom_end, freq=resample_rate)
-    timeline_1min = pd.date_range(zoom_start, zoom_end, freq='1min')
-
-    # 1. PREPARE SIGNALS (TOTAL PRESSURE)
-    t_mask = (trains['actual_arrival'] >= zoom_start) & (trains['actual_arrival'] <= zoom_end)
-    zoom_trains = trains[t_mask].copy()
-
-    # Generate Both Signals
-    s_arr, s_dep = ta.generate_signals(zoom_trains, timeline_1min, config['params'])
-
-    # SUM THEM: This fixes the "missing afternoon" issue
-    sig_total = s_arr + s_dep
-
-    # Resample for plotting (Mean pressure over 15 mins)
-    sig_resampled = sig_total.resample(resample_rate).mean()
-
-    # 2. PREPARE FLOWS
-    starts = bikes[bikes['start_place'].isin(config['bike_stations'])]
-    ends = bikes[bikes['end_place'].isin(config['bike_stations'])]
-
-    ts_rentals = starts.set_index('start_time').resample(resample_rate).size().reindex(timeline_res, fill_value=0)
-    ts_returns = ends.set_index('end_time').resample(resample_rate).size().reindex(timeline_res, fill_value=0) * -1
-
-    # 3. PLOTTING
-    fig, ax1 = plt.subplots(figsize=(14, 8))
-
-    # PRIMARY AXIS: FLOWS
-    ax1.bar(timeline_res, ts_rentals, width=0.007, color='#2ca02c', alpha=0.7, label='Rentals (Outflow)',
-            align='center')
-    ax1.bar(timeline_res, ts_returns, width=0.007, color='#1f77b4', alpha=0.7, label='Returns (Inflow)', align='center')
-
-    ax1.axhline(0, color='black', linewidth=0.8)
-    ax1.set_ylabel('Bike Activity (per 15 min)', fontsize=12, fontweight='bold')
-
-    # SECONDARY AXIS: PRESSURE
-    ax2 = ax1.twinx()
-
-    # Plot the Total Pressure
-    ax2.plot(timeline_res, sig_resampled, color='#d55e00', linewidth=2.5, label='Total Passenger Pressure')
-    ax2.fill_between(timeline_res, sig_resampled, color='#d55e00', alpha=0.1)
-
-    ax2.set_ylabel('Passenger Pressure (Arr + Dep)', color='#d55e00', fontsize=12, fontweight='bold')
-    ax2.tick_params(axis='y', labelcolor='#d55e00')
-
-    # SCALING FIX: Ensure the line doesn't hit the very top or stay too low
-    if not sig_resampled.empty and sig_resampled.max() > 0:
-        ax2.set_ylim(0, sig_resampled.max() * 1.15)  # Add 15% headroom
-    else:
-        ax2.set_ylim(0, 1)
-
-    # Formatting
-    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%a %H:%M'))
-    plt.title(f"Station Pulse: {city_name}\n(Bars: Actual Bikes | Line: Total Train Pressure)", fontsize=16)
-    plt.grid(True, alpha=0.3)
-
-    # Legend
-    lines_1, labels_1 = ax1.get_legend_handles_labels()
-    lines_2, labels_2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper left')
-
-    plt.tight_layout()
-    plt.savefig(os.path.join(RESULTS_DIR, f"Heartbeat_{city_name}.png"), dpi=300)
-    plt.close()
-
-
 def save_interactive_heartbeat(city_name, trains, bikes, logs, config):
     """Generates Interactive Flow Plot with Total Pressure."""
     if 'vis_start' not in config: return
@@ -382,8 +302,10 @@ def plot_split_violin(city_name, trains, bikes, config):
         ax.set_yticklabels([f"{h:02d}:00" for h in range(0, 25, 2)])
 
         # Lines
-        plt.axhline(y=7.0, color='red', linestyle='--', alpha=0.4, label='Morning Rush (7:00)')
-        plt.axhline(y=16.0, color='blue', linestyle='--', alpha=0.4, label='Afternoon Rush (16:00)')
+        plt.axhline(y=6.0, color='red', linestyle='--', alpha=0.4, label='Morning Rush (6:00)')
+        plt.axhline(y=9.0, color='red', linestyle='--', alpha=0.4, label='Morning Rush (9:00)')
+        plt.axhline(y=14.0, color='blue', linestyle='--', alpha=0.4, label='Afternoon Rush (14:00)')
+        plt.axhline(y=18.0, color='blue', linestyle='--', alpha=0.4, label='Afternoon Rush (18:00)')
 
         plt.legend(title="", loc='upper center', bbox_to_anchor=(0.5, -0.05), ncol=2, frameon=False, fontsize=12)
 
@@ -511,9 +433,6 @@ def main():
 
         # --- RUN VISUALIZATION ---
         df_trains = ta.standard_columns(df_trains)
-
-        # 1. Static Heartbeat (Now with Stock)
-        save_heartbeat_plot(city_key, df_trains, df_bikes, df_logs, config)  # <--- Added df_logs
 
         # 2. Interactive Heartbeat (Now with Stock)
         save_interactive_heartbeat(city_key, df_trains, df_bikes, df_logs, config)  # <--- Added df_logs
