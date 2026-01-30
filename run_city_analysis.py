@@ -126,17 +126,13 @@ NETWORKS = {
 
 TRAIN_CATS = {
     'Global': None,
-    'Regional': ['Os', 'Sp'],
+    'Regional': ['Os', 'Sp'], # Uncomment if you want separate analysis
     'LongDist': ['R', 'Ex', 'IC', 'EC', 'SC', 'rj']
 }
 
 
 # ==========================================
-# 3. VISUALIZATION FUNCTIONS (The "Activity River" Version)
-# ==========================================
-
-# ==========================================
-# 3. VISUALIZATION FUNCTIONS (Fixed: Total Pressure & Scaling)
+# 3. VISUALIZATION FUNCTIONS
 # ==========================================
 
 def save_interactive_heartbeat(city_name, trains, bikes, logs, config):
@@ -152,11 +148,12 @@ def save_interactive_heartbeat(city_name, trains, bikes, logs, config):
     t_mask = (trains['actual_arrival'] >= zoom_start) & (trains['actual_arrival'] <= zoom_end)
     zoom_trains = trains[t_mask].copy()
     s_arr, s_dep = ta.generate_signals(zoom_trains, timeline, config['params'])
-    sig_total = s_arr + s_dep  # <--- The Fix
+    sig_total = s_arr + s_dep
 
     # 2. Flows
-    starts = bikes[bikes['start_place'].isin(config['bike_stations'])]
-    ends = bikes[bikes['end_place'].isin(config['bike_stations'])]
+    valid_stations = [s.lower() for s in config['bike_stations']]
+    starts = bikes[bikes['start_place'].str.lower().isin(valid_stations)]
+    ends = bikes[bikes['end_place'].str.lower().isin(valid_stations)]
 
     ts_rentals = starts.set_index('start_time').resample('1min').size().reindex(timeline, fill_value=0)
     ts_returns = ends.set_index('end_time').resample('1min').size().reindex(timeline, fill_value=0) * -1
@@ -189,11 +186,10 @@ def save_interactive_heartbeat(city_name, trains, bikes, logs, config):
     fig.write_html(output_path)
     print(f"    -> Saved interactive graph to: {output_path}")
 
+
 def plot_split_violin(city_name, trains, bikes, config):
     """
     Generates a Split Violin Plot with Enhanced Contrast.
-    - Reduces smoothing to show individual train peaks.
-    - Applies mild non-linear scaling to accentuate pressure differences.
     """
     if 'vis_start' not in config: return
     print(f"  > Generating Synchronization Violin Plot for {city_name}...")
@@ -213,11 +209,19 @@ def plot_split_violin(city_name, trains, bikes, config):
     ])
 
     # 2. TRAIN DATA
-    df_trains = ta.standard_columns(trains)
+    # Ensure columns are standard before filtering
+    df_trains = ta.standard_columns(trains.copy())
+
+    # Check if we have data
+    if 'actual_arrival' not in df_trains.columns:
+        print("    [!] Skipping Violin: No Arrival Column found.")
+        return
+
     t_mask = (df_trains['actual_arrival'] >= zoom_start) & (df_trains['actual_arrival'] <= zoom_end)
     subset_trains = df_trains[t_mask].copy()
 
     if bike_times.empty or subset_trains.empty:
+        print("    [!] Skipping Violin: Empty data in zoom window.")
         return
 
     # Generate signals
@@ -238,13 +242,10 @@ def plot_split_violin(city_name, trains, bikes, config):
 
     # B. Train Events (Orange) - WITH CONTRAST BOOST
     sig_resampled = sig_total.resample('10min').mean()
-
-    # Keep even small signals (night trains)
     sig_resampled = sig_resampled[sig_resampled > 0.0001]
 
     if not sig_resampled.empty:
         # CONTRAST BOOST: Raise to power 1.5 to make peaks "pop" more
-        # This makes the wide parts wider and narrow parts narrower visually
         sig_enhanced = sig_resampled ** 1.5
 
         # Recalculate scaling based on enhanced signal
@@ -254,9 +255,7 @@ def plot_split_violin(city_name, trains, bikes, config):
 
         for t, val in sig_enhanced.items():
             count = int(round(val * scale_factor))
-
-            # Ensure visibility for non-zero pressure
-            if count == 0 and val > 0: count = 1
+            if count == 0 and val > 0: count = 1  # Visibility Floor
 
             if count > 0:
                 data_rows.extend([{
@@ -265,6 +264,8 @@ def plot_split_violin(city_name, trains, bikes, config):
                     'Hour': t.hour + t.minute / 60.0,
                     'Type': 'Total Passenger Pressure'
                 }] * count)
+
+    if not data_rows: return
 
     df_viz = pd.DataFrame(data_rows)
     df_viz.sort_values('DayNum', inplace=True)
@@ -288,7 +289,7 @@ def plot_split_violin(city_name, trains, bikes, config):
             inner="quartile",
             scale="count",
             cut=0,
-            bw_adjust=0.35  # <--- KEY CHANGE: Lower bandwidth = Sharper Details
+            bw_adjust=0.35
         )
 
         plt.title(f"Station Synchronization: {city_name}\n(Left: Bike Rentals+Returns | Right: Train Arr+Dep)",
@@ -301,22 +302,23 @@ def plot_split_violin(city_name, trains, bikes, config):
         ax.set_yticks(range(0, 25, 2))
         ax.set_yticklabels([f"{h:02d}:00" for h in range(0, 25, 2)])
 
-        # Lines
-        plt.axhline(y=6.0, color='red', linestyle='--', alpha=0.4, label='Morning Rush (6:00)')
-        plt.axhline(y=9.0, color='red', linestyle='--', alpha=0.4, label='Morning Rush (9:00)')
-        plt.axhline(y=14.0, color='blue', linestyle='--', alpha=0.4, label='Afternoon Rush (14:00)')
-        plt.axhline(y=18.0, color='blue', linestyle='--', alpha=0.4, label='Afternoon Rush (18:00)')
+        # Rush Hour Lines
+        plt.axhline(y=6.0, color='red', linestyle='--', alpha=0.4)
+        plt.axhline(y=9.0, color='red', linestyle='--', alpha=0.4)
+        plt.axhline(y=14.0, color='blue', linestyle='--', alpha=0.4)
+        plt.axhline(y=18.0, color='blue', linestyle='--', alpha=0.4)
 
         plt.legend(title="", loc='upper center', bbox_to_anchor=(0.5, -0.05), ncol=2, frameon=False, fontsize=12)
 
         output_path = os.path.join(RESULTS_DIR, f"Violin_Sync_{city_name}.png")
         plt.tight_layout()
-        plt.savefig(output_path, dpi=600)
+        plt.savefig(output_path, dpi=300)
         plt.close()
         print(f"    -> Saved enhanced violin plot to: {output_path}")
 
     except Exception as e:
         print(f"    [!] Error plotting violin: {e}")
+
 
 # ==========================================
 # 4. EXECUTION
@@ -343,6 +345,7 @@ def main():
             continue
 
         try:
+            # Header Detection Logic
             df_preview = pd.read_excel(config['file_trains'], header=None, nrows=10)
             header_idx = None
             for idx, row in df_preview.iterrows():
@@ -363,79 +366,46 @@ def main():
             continue
 
         # 2. Load WEATHER
-        if not os.path.exists(config['file_weather']):
-            print(f"  Skipping: {config['file_weather']} missing.")
-            continue
-        df_weather = pd.read_excel(config['file_weather'], decimal=',')
+        df_weather = None
+        if os.path.exists(config['file_weather']):
+            df_weather = pd.read_excel(config['file_weather'], decimal=',')
+        else:
+            print(f"  [WARN] Weather file {config['file_weather']} missing. Proceeding without weather.")
 
         # 3. Load RENTALS
         try:
             print(f"  Loading Rentals Sheet: {config['sheet_rentals']}...")
             df_bikes = pd.read_excel(FILE_BIKE_DATA, sheet_name=config['sheet_rentals'])
+            # Clean columns immediately for safety
             df_bikes.columns = [str(c).lower().strip() for c in df_bikes.columns]
             df_bikes['start_time'] = pd.to_datetime(df_bikes['start_time'])
             df_bikes['end_time'] = pd.to_datetime(df_bikes['end_time'])
         except Exception as e:
-            print(f"  Error loading rental sheet '{config['sheet_rentals']}': {e}")
+            print(f"  [ERROR] Error loading rental sheet '{config['sheet_rentals']}': {e}")
             continue
 
-        # 4. Load LOGS
+        # 4. Load LOGS (Optional)
+        df_logs = None
         try:
             log_sheet = config.get('sheet_logs', config['sheet_rentals'])
             print(f"  Loading Logs Sheet: {log_sheet}...")
-
+            # We just load it to pass to ta, but currently ta doesn't use it strictly for masks anymore
+            # Kept for future extensibility or interactive plots if needed
             df_logs_raw = pd.read_excel(FILE_BIKE_DATA, sheet_name=log_sheet)
-            df_logs_raw.columns = [str(c).strip() for c in df_logs_raw.columns]
-            clean_cols = {c.lower(): c for c in df_logs_raw.columns}
-
-            time_col = None
-            for candidate in ['čas', 'cas', 'time', 'datum', 'timestamp']:
-                if candidate in clean_cols:
-                    time_col = clean_cols[candidate]
-                    break
-
-            if not time_col:
-                print(f"    [!] Log Warning: Time column not found.")
-                df_logs = None
-            else:
-                target_stations = config['bike_stations']
-                found_cols = []
-                for target in target_stations:
-                    match = next((orig for clean, orig in clean_cols.items() if target.lower() in clean), None)
-                    if match:
-                        found_cols.append(match)
-
-                if found_cols:
-                    df_logs = pd.DataFrame()
-                    df_logs['timestamp'] = pd.to_datetime(df_logs_raw[time_col])
-                    df_logs['bikes'] = df_logs_raw[found_cols].fillna(0).sum(axis=1)
-                    print(f"    -> Logs loaded: {len(df_logs)} records.")
-                else:
-                    print(f"    [!] Log Warning: No matching station columns found.")
-                    df_logs = None
-
-        except Exception as e:
-            print(f"  Warning: Log processing failed ({e}). Analysis will assume full availability.")
-            df_logs = None
-
-        # 5. Load REBALANCING & Filter
-        try:
-            min_limit = config.get('min_trip_minutes', 0.5)
-            initial_count = len(df_bikes)
-            df_bikes = df_bikes[(df_bikes['end_time'] - df_bikes['start_time']) > pd.Timedelta(minutes=min_limit)]
-            print(f"  Filtered {initial_count - len(df_bikes)} short trips (< {min_limit} min).")
-        except Exception as e:
-            print(f"  Warning: Filter failed ({e}).")
+        except:
+            print("  [WARN] Logs not found or failed. Skipping logs.")
 
         # --- RUN ANALYSIS ---
+        # This calls the ROBUST transport_analytics module
         res = ta.analyze_city_data(city_key, config, df_trains, df_bikes, df_logs, df_weather, TRAIN_CATS)
         all_results.extend(res)
 
         # --- RUN VISUALIZATION ---
+        # Ensure standard columns for plotting functions
         df_trains = ta.standard_columns(df_trains)
 
-        # 2. Interactive Heartbeat (Now with Stock)
-        save_interactive_heartbeat(city_key, df_trains, df_bikes, df_logs, config)  # <--- Added df_logs
+        # 2. Interactive Heartbeat
+        save_interactive_heartbeat(city_key, df_trains, df_bikes, df_logs, config)
 
         # 3. Split Violin Sync Plot
         plot_split_violin(city_key, df_trains, df_bikes, config)
@@ -443,10 +413,12 @@ def main():
     # --- SAVE RESULTS ---
     if all_results:
         df_final = pd.DataFrame(all_results)
-        excel_path = os.path.join(RESULTS_DIR, "Final_Results.xlsx")
+        excel_path = os.path.join(RESULTS_DIR, "Final_Correlation_Results.xlsx")
         df_final.to_excel(excel_path, index=False)
         print(f"\nAnalysis Complete. Results saved to {RESULTS_DIR}/")
-        print(df_final.round(3).to_string(index=False))
+        print(df_final.round(3).T)  # Print Transposed for better readability
+    else:
+        print("\n[!] No results generated.")
 
 
 if __name__ == "__main__":
