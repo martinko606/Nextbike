@@ -11,6 +11,7 @@ def standard_columns(df):
     """
     Renames columns to standard names with robust cleaning.
     """
+    # Aggressive Cleaning
     df.columns = [str(c).lower().strip().replace('\n', ' ').replace('_', ' ').replace('.', ' ') for c in df.columns]
 
     # Mappings
@@ -47,7 +48,7 @@ def standard_columns(df):
 
 
 # ==========================================
-# 2. SIGNAL PROCESSING
+# 2. SIGNAL PROCESSING (Dual-Profile)
 # ==========================================
 def get_dynamic_kernels(duration_arr, duration_dep):
     # Arrival: Forward looking
@@ -63,41 +64,64 @@ def get_dynamic_kernels(duration_arr, duration_dep):
 
 
 def generate_signals(subset_trains, timeline, params):
-    dur_arr = int(params.get('pulse_arr_reg', 20))
-    dur_dep = int(params.get('pulse_dep_reg', 30))
-    k_arr, k_dep = get_dynamic_kernels(dur_arr, dur_dep)
+    # --- 1. Load Parameters for BOTH Profiles ---
+    # Regional (Commuter)
+    dur_arr_reg = int(params.get('pulse_arr_reg', 20))
+    dur_dep_reg = int(params.get('pulse_dep_reg', 30))
 
+    # Long Distance (Traveler) - Defaults to Reg if not set
+    dur_arr_ld = int(params.get('pulse_arr_ld', dur_arr_reg + 10))
+    dur_dep_ld = int(params.get('pulse_dep_ld', dur_dep_reg + 15))
+
+    # --- 2. Pre-Calculate BOTH Kernel Sets ---
+    k_arr_reg, k_dep_reg = get_dynamic_kernels(dur_arr_reg, dur_dep_reg)
+    k_arr_ld, k_dep_ld = get_dynamic_kernels(dur_arr_ld, dur_dep_ld)
+
+    # Weights & Boosts
     weights = params.get('weights', {})
-    sig_arr = pd.Series(0.0, index=timeline)
-    sig_dep = pd.Series(0.0, index=timeline)
-
     boost_am = params.get('rush_am', 1.0)
     boost_pm = params.get('rush_pm', 1.0)
 
-    # Pre-calculate timeline index for O(1) lookups
+    # Initialize Signals
+    sig_arr = pd.Series(0.0, index=timeline)
+    sig_dep = pd.Series(0.0, index=timeline)
     timeline_idx = set(timeline)
+
+    # Define Long Distance Types
+    ld_types = {'R', 'Ex', 'IC', 'EC', 'SC', 'rj', 'Rx', 'EN', 'NJ', 'LE', 'Leo'}
 
     for t in subset_trains.itertuples(index=False):
         t_type = str(getattr(t, 'train_type', 'Os')).strip()
         w = weights.get(t_type, 1.0)
 
-        # Arrival
+        # --- 3. Select Profile based on Type ---
+        is_ld = t_type in ld_types
+
+        if is_ld:
+            k_arr_curr, dur_arr_curr = k_arr_ld, dur_arr_ld
+            k_dep_curr, dur_dep_curr = k_dep_ld, dur_dep_ld
+        else:
+            k_arr_curr, dur_arr_curr = k_arr_reg, dur_arr_reg
+            k_dep_curr, dur_dep_curr = k_dep_reg, dur_dep_reg
+
+        # --- 4. Apply Signal (Arrival) ---
         arr_val = getattr(t, 'actual_arrival', pd.NaT)
         if pd.notnull(arr_val):
             t_time = arr_val.round('min')
             if t_time in timeline_idx:
                 try:
                     start_idx = sig_arr.index.get_loc(t_time)
-                    # Time Boost
                     c_boost = boost_am if (6 <= t_time.hour <= 9) else 1.0
-                    end_idx = min(start_idx + dur_arr, len(sig_arr))
+
+                    end_idx = min(start_idx + dur_arr_curr, len(sig_arr))
                     length = end_idx - start_idx
                     if length > 0:
-                        sig_arr.iloc[start_idx:end_idx] += (k_arr[:length] * w * c_boost)
+                        # Use correct kernel slice
+                        sig_arr.iloc[start_idx:end_idx] += (k_arr_curr[:length] * w * c_boost)
                 except:
                     pass
 
-        # Departure
+        # --- 5. Apply Signal (Departure) ---
         dep_val = getattr(t, 'actual_departure', pd.NaT)
         if pd.notnull(dep_val):
             t_time = dep_val.round('min')
@@ -105,10 +129,12 @@ def generate_signals(subset_trains, timeline, params):
                 try:
                     end_idx = sig_dep.index.get_loc(t_time) + 1
                     c_boost = boost_pm if (14 <= t_time.hour <= 18) else 1.0
-                    start_idx = max(end_idx - dur_dep, 0)
+
+                    start_idx = max(end_idx - dur_dep_curr, 0)
                     length = end_idx - start_idx
                     if length > 0:
-                        sig_dep.iloc[start_idx:end_idx] += (k_dep[-length:] * w * c_boost)
+                        # Use correct kernel slice (tail end)
+                        sig_dep.iloc[start_idx:end_idx] += (k_dep_curr[-length:] * w * c_boost)
                 except:
                     pass
 
@@ -168,7 +194,7 @@ def analyze_city_data(city_name, config, df_trains, df_bikes, df_logs, df_weathe
 
     ts_total = ts_starts + ts_ends
 
-    # --- MASKS & WEIGHTS ---
+    # --- CONTEXT ---
     mask_available = pd.Series(True, index=timeline)
     obs_weights = pd.Series(1.0, index=timeline)
     mask_bad_weather = pd.Series(False, index=timeline)
@@ -187,14 +213,12 @@ def analyze_city_data(city_name, config, df_trains, df_bikes, df_logs, df_weathe
         except:
             pass
 
-    # Time Masks
     hours = timeline.hour
     mask_workday = timeline.dayofweek < 5
     mask_weekend = ~mask_workday
     mask_am_rush = (hours >= 6) & (hours < 9)
     mask_pm_rush = (hours >= 14) & (hours < 18)
 
-    # Combined Contexts
     mask_workday_am = mask_workday & mask_am_rush
     mask_workday_pm = mask_workday & mask_pm_rush
     mask_good_weather = ~mask_bad_weather
@@ -222,7 +246,7 @@ def analyze_city_data(city_name, config, df_trains, df_bikes, df_logs, df_weathe
             if len(s) < 30 or s.std() == 0 or a.std() == 0: return np.nan
             return weighted_pearson_corr(s.values, a.values, w.values)
 
-        # 1. GLOBAL (Arr+Dep vs Total Movement)
+        # 1. GLOBAL
         r_glob_all = run_corr(s_total, ts_total, pd.Series(True, index=timeline))
         r_glob_wd = run_corr(s_total, ts_total, mask_workday)
         r_glob_wk = run_corr(s_total, ts_total, mask_weekend)
@@ -231,12 +255,12 @@ def analyze_city_data(city_name, config, df_trains, df_bikes, df_logs, df_weathe
         r_glob_good = run_corr(s_total, ts_total, mask_good_weather)
         r_glob_bad = run_corr(s_total, ts_total, mask_bad_weather)
 
-        # 2. ARRIVAL (Arr vs Rentals)
+        # 2. ARRIVAL
         r_arr_all = run_corr(s_arr, ts_starts, pd.Series(True, index=timeline))
         r_arr_wd = run_corr(s_arr, ts_starts, mask_workday)
         r_arr_wk = run_corr(s_arr, ts_starts, mask_weekend)
 
-        # 3. DEPARTURE (Dep vs Returns)
+        # 3. DEPARTURE
         r_dep_all = run_corr(s_dep, ts_ends, pd.Series(True, index=timeline))
         r_dep_wd = run_corr(s_dep, ts_ends, mask_workday)
         r_dep_wk = run_corr(s_dep, ts_ends, mask_weekend)
