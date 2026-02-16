@@ -244,27 +244,35 @@ def find_representative_day(city_name, cfg):
     # ---------------------------------------------------------
     # 3. VISUALIZE
     # ---------------------------------------------------------
-    plot_representative_day(city_name, best_day, s_total_global, c_rent, c_ret, df_w_raw, best_day_corr, target_corr)
+    plot_representative_day(city_name, best_day, s_total_global, c_rent, c_ret, df_w_raw, df_t, best_day_corr, target_corr)
 
 
-def plot_representative_day(city_name, date, s_total, c_rent, c_ret, df_w, day_corr, global_corr):
+from matplotlib.transforms import ScaledTranslation
+
+
+def plot_representative_day(city_name, date, s_total, c_rent, c_ret, df_w, df_t, day_corr, global_corr):
     print(f"   🎨 Generating Plot...")
 
-    start_plot = pd.Timestamp(date) + pd.Timedelta(hours=4)
+    start_plot = pd.Timestamp(date) + pd.Timedelta(hours=0)
     end_plot = pd.Timestamp(date) + pd.Timedelta(hours=23, minutes=59)
 
-    # Slice existing signals (Do not re-generate)
+    # 1. Slice Signals
     plot_mask = (s_total.index >= start_plot) & (s_total.index <= end_plot)
-
     s_plot = s_total[plot_mask]
     rent_plot = c_rent[plot_mask]
     ret_plot = c_ret[plot_mask]
 
-    # Weather
+    # 2. Slice Trains (Independent Filtering)
+    mask_arr = (df_t['actual_arrival'] >= start_plot) & (df_t['actual_arrival'] <= end_plot)
+    arrs = df_t.loc[mask_arr & pd.notnull(df_t['actual_arrival']), 'actual_arrival']
+
+    mask_dep = (df_t['actual_departure'] >= start_plot) & (df_t['actual_departure'] <= end_plot)
+    deps = df_t.loc[mask_dep & pd.notnull(df_t['actual_departure']), 'actual_departure']
+
+    # 3. Weather Processing
     w_rain, w_temp = pd.DataFrame(), pd.DataFrame()
     if df_w is not None and not df_w.empty:
         try:
-            # Re-process weather for plot (since we didn't save the processed one)
             t_col = next((c for c in df_w.columns if c in ['datetime', 'date', 'cas']), None)
             p_col = next((c for c in df_w.columns if c in ['precip', 'rain', 'srazky']), None)
             tm_col = next((c for c in df_w.columns if c in ['temp', 'teplota']), None)
@@ -279,47 +287,90 @@ def plot_representative_day(city_name, date, s_total, c_rent, c_ret, df_w, day_c
         except:
             pass
 
-    # Draw
-    fig, (ax_w, ax_main) = plt.subplots(2, 1, figsize=(24, 10), sharex=True, gridspec_kw={'height_ratios': [1, 4]})
+        # --- PLOTTING ---
+        fig, (ax_w, ax_main) = plt.subplots(2, 1, figsize=(24, 10), sharex=True, gridspec_kw={'height_ratios': [1, 4]})
 
-    # Weather
-    if not w_rain.empty:
-        ax_w.bar(w_rain.index, w_rain.values, color='#4682B4', width=0.007, label='Rain')
-        ax_w.set_ylabel('Rain (mm)', color='#4682B4')
-        ax_w.set_ylim(0, max(w_rain.max() * 1.5, 0.5))
-    if not w_temp.empty:
-        ax_wt = ax_w.twinx()
-        ax_wt.plot(w_temp.index, w_temp.values, color='#DC143C', marker='o', alpha=0.5, ls=':')
-        ax_wt.set_ylabel('Temp (°C)', color='#DC143C')
+        # A. Weather Panel
+        if not w_rain.empty:
+            ax_w.bar(w_rain.index, w_rain.values, color='#4682B4', width=0.007, label='Rain')
+            ax_w.set_ylabel('Rain (mm)', color='#4682B4', fontsize=16)  # <--- ADJ FONT
+            ax_w.tick_params(axis='y', labelsize=14)  # <--- ADJ FONT (Tick Numbers)
+            ax_w.set_ylim(0, max(w_rain.max() * 1.5, 0.5))
+        if not w_temp.empty:
+            ax_wt = ax_w.twinx()
+            ax_wt.plot(w_temp.index, w_temp.values, color='#DC143C', marker='o', alpha=0.5, ls=':')
+            ax_wt.set_ylabel('Temp (°C)', color='#DC143C', fontsize=16)  # <--- ADJ FONT
+            ax_wt.tick_params(axis='y', labelsize=16)  # <--- ADJ FONT
 
-    # Main
+    # B. Main Panel
     x = s_plot.index
-    ax_main.fill_between(x, s_plot, color='#FF8C00', alpha=0.15, label='Total Pressure')
+
+    # 1. Total Pressure
+    ax_main.fill_between(x, s_plot, color='#FF8C00', alpha=0.15, label='Passenger Pressure')
     ax_main.plot(x, s_plot, color='#FF8C00', lw=2)
 
+    # 2. Bike Events
     ax_b = ax_main.twinx()
-    if not rent_plot.empty: ax_b.bar(rent_plot.index, rent_plot.values, width=0.0007, color='#2ca02c', alpha=0.8,
-                                     label='Rentals')
-    if not ret_plot.empty: ax_b.bar(ret_plot.index, ret_plot.values, width=0.0007, color='#1f77b4', alpha=0.8,
-                                    label='Returns')
+    ax_main.set_ylim(bottom=0)
+    ax_b.set_ylim(bottom=0)
 
-    ax_b.set_ylim(0, 10);
+    if not rent_plot.empty:
+        ax_b.bar(rent_plot.index, rent_plot.values, width=0.002, color='#2ca02c', alpha=0.6, label='Rentals', zorder=1)
+    if not ret_plot.empty:
+        ax_b.bar(ret_plot.index, ret_plot.values, width=0.002, color='#1f77b4', alpha=0.6, label='Returns', zorder=1)
+
+    ax_b.set_ylim(0, 10)
     ax_b.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
     ax_b.set_ylabel("Bike Events", color='#333333', fontweight='bold')
 
-    # Formatting
+    # 3. Train Markers (Fixed on Axis)
+    # 10 points offset ~ 14 pixels
+    trans_up = ScaledTranslation(0, 10 / 72, fig.dpi_scale_trans)
+    trans_down = ScaledTranslation(0, -10 / 72, fig.dpi_scale_trans)
+
+    # Departures: UP
+    ax_main.scatter(deps, [0] * len(deps), marker='^', color='#D62728', s=80,
+                    zorder=10, label='Departure', clip_on=False,
+                    transform=ax_main.transData + trans_up)
+
+    # Arrivals: DOWN
+    ax_main.scatter(arrs, [0] * len(arrs), marker='v', color='black', s=80,
+                    zorder=10, label='Arrival', clip_on=False,
+                    transform=ax_main.transData + trans_down)
+
+    # 4. Formatting (Font sizes added here per previous request)
     ax_main.set_xlim(start_plot, end_plot)
+    ax_main.set_ylabel("Passenger Pressure", color='#FF8C00', fontweight='bold', fontsize=18)
+    ax_main.tick_params(axis='both', which='major', labelsize=16, pad=15)
     ax_main.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
 
+    # Legend
+    lines_1, labels_1 = ax_main.get_legend_handles_labels()
+    lines_2, labels_2 = ax_b.get_legend_handles_labels()
+    by_label = dict(zip(labels_1 + labels_2, lines_1 + lines_2))
+    ax_main.legend(by_label.values(), by_label.keys(), loc='upper left', ncol=5, frameon=True, fontsize=18)
+
+    # Title
     plt.suptitle(
         f"Synchronized Transport Heartbeat: {city_name}\nDate: {date} (Day r={day_corr:.3f} | Global Target r={global_corr:.3f})",
-        fontweight='bold')
+        fontweight='bold', fontsize=22)
+
+    # === MARGIN FIXES ===
+    # 1. Adjust internal spacing (rect leaves room for the suptitle)
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
 
     safe = city_name.replace(' ', '_').replace('.', '')
-    plt.savefig(f"{SAVE_FOLDER}/Heartbeat_MatchGlobal_{safe}.png", dpi=300)
-    plt.close()
-    print(f"   ✅ Saved Heartbeat_MatchGlobal_{safe}.png")
 
+    # 2. Save with bbox_inches='tight' (Cuts external whitespace)
+    png_path = f"{SAVE_FOLDER}/Heartbeat_MatchGlobal_{safe}.png"
+    plt.savefig(png_path, dpi=600, bbox_inches='tight')
+    print(f"   ✅ Saved PNG: {png_path}")
+
+    svg_path = f"{SAVE_FOLDER}/Heartbeat_MatchGlobal_{safe}.svg"
+    plt.savefig(svg_path, format='svg', bbox_inches='tight')
+    print(f"   ✅ Saved SVG: {svg_path}")
+
+    plt.close()
 
 if __name__ == "__main__":
     for city, cfg in CITIES.items():
