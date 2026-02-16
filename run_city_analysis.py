@@ -312,7 +312,7 @@ def plot_split_violin(city_name, trains, bikes, config):
 
         output_path = os.path.join(RESULTS_DIR, f"Violin_Sync_{city_name}.png")
         plt.tight_layout()
-        plt.savefig(output_path, dpi=300)
+        plt.savefig(output_path, dpi=600)
         plt.close()
         print(f"    -> Saved enhanced violin plot to: {output_path}")
 
