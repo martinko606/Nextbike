@@ -2,6 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.ticker as ticker
+from matplotlib.transforms import ScaledTranslation
 import numpy as np
 import os
 import warnings
@@ -156,7 +157,6 @@ def find_representative_day(city_name, cfg):
     print("   🌍 Calculating Global Correlation (Exact TA Logic)...")
 
     # C. Generate Signals (USING TA MODULE)
-    # Note: ta.generate_signals returns s_arr, s_dep
     s_arr, s_dep = ta.generate_signals(df_t, global_line, cfg['params'])
     s_total_global = s_arr + s_dep
 
@@ -169,15 +169,10 @@ def find_representative_day(city_name, cfg):
     c_ret = ends.set_index('end_time').resample('1min').size().reindex(global_line, fill_value=0)
     c_total_global = c_rent + c_ret
 
-    # E. Calculate Target (Using TA Weighted Logic if possible, or standard)
-    # TA usually uses weighted_pearson inside the loop.
-    # Here we replicate the EXACT masking logic from analyze_city_data
-
-    # Masks
+    # E. Calculate Target (Weather Masking)
     mask_available = pd.Series(True, index=global_line)
     obs_weights = pd.Series(1.0, index=global_line)
 
-    # Weather Masking (Replicating TA)
     if df_w_raw is not None:
         try:
             df_w_raw.columns = [str(c).lower().strip() for c in df_w_raw.columns]
@@ -191,10 +186,8 @@ def find_representative_day(city_name, cfg):
         except:
             pass
 
-    # Strict TA Correlation
-    valid_mask = mask_available  # & (True for global)
+    valid_mask = mask_available
 
-    # CALL TA WEIGHTED CORR
     target_corr = ta.weighted_pearson_corr(
         s_total_global[valid_mask].values,
         c_total_global[valid_mask].values,
@@ -221,14 +214,12 @@ def find_representative_day(city_name, cfg):
         day_mask = (global_line >= d_start) & (global_line <= d_end)
         if day_mask.sum() < 1000: continue
 
-        # Extract slices
         s_slice = s_total_global[day_mask]
         c_slice = c_total_global[day_mask]
         w_slice = obs_weights[day_mask]
 
         if s_slice.sum() == 0 or c_slice.sum() == 0: continue
 
-        # Calculate Day Correlation (Weighted)
         day_corr = ta.weighted_pearson_corr(s_slice.values, c_slice.values, w_slice.values)
 
         if pd.isna(day_corr): continue
@@ -244,14 +235,12 @@ def find_representative_day(city_name, cfg):
     # ---------------------------------------------------------
     # 3. VISUALIZE
     # ---------------------------------------------------------
-    plot_representative_day(city_name, best_day, s_total_global, c_rent, c_ret, df_w_raw, df_t, best_day_corr, target_corr)
-
-
-from matplotlib.transforms import ScaledTranslation
+    plot_representative_day(city_name, best_day, s_total_global, c_rent, c_ret, df_w_raw, df_t, best_day_corr,
+                            target_corr)
 
 
 def plot_representative_day(city_name, date, s_total, c_rent, c_ret, df_w, df_t, day_corr, global_corr):
-    print(f"   🎨 Generating Plot...")
+    print(f"   🎨 Generating Plots (With and Without Headings)...")
 
     start_plot = pd.Timestamp(date) + pd.Timedelta(hours=0)
     end_plot = pd.Timestamp(date) + pd.Timedelta(hours=23, minutes=59)
@@ -287,20 +276,20 @@ def plot_representative_day(city_name, date, s_total, c_rent, c_ret, df_w, df_t,
         except:
             pass
 
-        # --- PLOTTING ---
-        fig, (ax_w, ax_main) = plt.subplots(2, 1, figsize=(24, 10), sharex=True, gridspec_kw={'height_ratios': [1, 4]})
+    # --- PLOTTING ---
+    fig, (ax_w, ax_main) = plt.subplots(2, 1, figsize=(24, 10), sharex=True, gridspec_kw={'height_ratios': [1, 4]})
 
-        # A. Weather Panel
-        if not w_rain.empty:
-            ax_w.bar(w_rain.index, w_rain.values, color='#4682B4', width=0.007, label='Rain')
-            ax_w.set_ylabel('Rain (mm)', color='#4682B4', fontsize=16)  # <--- ADJ FONT
-            ax_w.tick_params(axis='y', labelsize=14)  # <--- ADJ FONT (Tick Numbers)
-            ax_w.set_ylim(0, max(w_rain.max() * 1.5, 0.5))
-        if not w_temp.empty:
-            ax_wt = ax_w.twinx()
-            ax_wt.plot(w_temp.index, w_temp.values, color='#DC143C', marker='o', alpha=0.5, ls=':')
-            ax_wt.set_ylabel('Temp (°C)', color='#DC143C', fontsize=16)  # <--- ADJ FONT
-            ax_wt.tick_params(axis='y', labelsize=16)  # <--- ADJ FONT
+    # A. Weather Panel
+    if not w_rain.empty:
+        ax_w.bar(w_rain.index, w_rain.values, color='#4682B4', width=0.007, label='Rain')
+        ax_w.set_ylabel('Rain (mm)', color='#4682B4', fontsize=16)
+        ax_w.tick_params(axis='y', labelsize=14)
+        ax_w.set_ylim(0, max(w_rain.max() * 1.5, 0.5))
+    if not w_temp.empty:
+        ax_wt = ax_w.twinx()
+        ax_wt.plot(w_temp.index, w_temp.values, color='#DC143C', marker='o', alpha=0.5, ls=':')
+        ax_wt.set_ylabel('Temp (°C)', color='#DC143C', fontsize=16)
+        ax_wt.tick_params(axis='y', labelsize=16)
 
     # B. Main Panel
     x = s_plot.index
@@ -324,53 +313,59 @@ def plot_representative_day(city_name, date, s_total, c_rent, c_ret, df_w, df_t,
     ax_b.set_ylabel("Bike Events", color='#333333', fontweight='bold')
 
     # 3. Train Markers (Fixed on Axis)
-    # 10 points offset ~ 14 pixels
     trans_up = ScaledTranslation(0, 10 / 72, fig.dpi_scale_trans)
     trans_down = ScaledTranslation(0, -10 / 72, fig.dpi_scale_trans)
 
-    # Departures: UP
     ax_main.scatter(deps, [0] * len(deps), marker='^', color='#D62728', s=80,
-                    zorder=10, label='Departure', clip_on=False,
-                    transform=ax_main.transData + trans_up)
+                    zorder=10, label='Departure', clip_on=False, transform=ax_main.transData + trans_up)
 
-    # Arrivals: DOWN
     ax_main.scatter(arrs, [0] * len(arrs), marker='v', color='black', s=80,
-                    zorder=10, label='Arrival', clip_on=False,
-                    transform=ax_main.transData + trans_down)
+                    zorder=10, label='Arrival', clip_on=False, transform=ax_main.transData + trans_down)
 
-    # 4. Formatting (Font sizes added here per previous request)
+    # 4. Formatting
     ax_main.set_xlim(start_plot, end_plot)
     ax_main.set_ylabel("Passenger Pressure", color='#FF8C00', fontweight='bold', fontsize=18)
     ax_main.tick_params(axis='both', which='major', labelsize=16, pad=15)
     ax_main.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
 
-    # Legend
     lines_1, labels_1 = ax_main.get_legend_handles_labels()
     lines_2, labels_2 = ax_b.get_legend_handles_labels()
     by_label = dict(zip(labels_1 + labels_2, lines_1 + lines_2))
     ax_main.legend(by_label.values(), by_label.keys(), loc='upper left', ncol=5, frameon=True, fontsize=18)
 
-    # Title
+    safe = city_name.replace(' ', '_').replace('.', '')
+
+    # ==========================================
+    # EXPORT 1: "NO HEADING" VERSION (For Paper)
+    # ==========================================
+    plt.tight_layout()  # Standard layout with no extra top room
+
+    png_path_clean = f"{SAVE_FOLDER}/Heartbeat_MatchGlobal_{safe}_NoHeading.png"
+    svg_path_clean = f"{SAVE_FOLDER}/Heartbeat_MatchGlobal_{safe}_NoHeading.svg"
+
+    plt.savefig(png_path_clean, dpi=600, bbox_inches='tight')
+    plt.savefig(svg_path_clean, format='svg', bbox_inches='tight')
+    print(f"   ✅ Saved No-Heading PNG: {png_path_clean}")
+
+    # ==========================================
+    # EXPORT 2: "WITH HEADING" VERSION (For Reference)
+    # ==========================================
+    # Now we add the title dynamically without redrawing the whole graph
     plt.suptitle(
         f"Synchronized Transport Heartbeat: {city_name}\nDate: {date} (Day r={day_corr:.3f} | Global Target r={global_corr:.3f})",
         fontweight='bold', fontsize=22)
 
-    # === MARGIN FIXES ===
-    # 1. Adjust internal spacing (rect leaves room for the suptitle)
+    # Adjust layout to make room for the newly added suptitle
     plt.tight_layout(rect=[0, 0, 1, 0.96])
 
-    safe = city_name.replace(' ', '_').replace('.', '')
+    png_path_titled = f"{SAVE_FOLDER}/Heartbeat_MatchGlobal_{safe}_Titled.png"
 
-    # 2. Save with bbox_inches='tight' (Cuts external whitespace)
-    png_path = f"{SAVE_FOLDER}/Heartbeat_MatchGlobal_{safe}.png"
-    plt.savefig(png_path, dpi=600, bbox_inches='tight')
-    print(f"   ✅ Saved PNG: {png_path}")
+    plt.savefig(png_path_titled, dpi=600, bbox_inches='tight')
+    print(f"   ✅ Saved Titled PNG: {png_path_titled}")
 
-    svg_path = f"{SAVE_FOLDER}/Heartbeat_MatchGlobal_{safe}.svg"
-    plt.savefig(svg_path, format='svg', bbox_inches='tight')
-    print(f"   ✅ Saved SVG: {svg_path}")
-
+    # Close figure to free memory
     plt.close()
+
 
 if __name__ == "__main__":
     for city, cfg in CITIES.items():
