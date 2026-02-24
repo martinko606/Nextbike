@@ -190,6 +190,7 @@ def save_interactive_heartbeat(city_name, trains, bikes, logs, config):
 def plot_split_violin(city_name, trains, bikes, config):
     """
     Generates a Split Violin Plot with Enhanced Contrast.
+    Saves two versions: One with Heading (Title) and one without.
     """
     if 'vis_start' not in config: return
     print(f"  > Generating Synchronization Violin Plot for {city_name}...")
@@ -292,9 +293,8 @@ def plot_split_violin(city_name, trains, bikes, config):
             bw_adjust=0.35
         )
 
-        plt.title(f"Station Synchronization: {city_name}\n(Left: Bike Rentals+Returns | Right: Train Arr+Dep)",
-                  fontsize=16, fontweight='bold')
-        plt.ylabel("Time of Day", fontsize=12)
+        # Labels (Common)
+        plt.ylabel("Time of Day", fontsize=18)
         plt.xlabel("")
 
         # Axis 00-24
@@ -308,13 +308,31 @@ def plot_split_violin(city_name, trains, bikes, config):
         plt.axhline(y=14.0, color='blue', linestyle='--', alpha=0.4)
         plt.axhline(y=18.0, color='blue', linestyle='--', alpha=0.4)
 
-        plt.legend(title="", loc='upper center', bbox_to_anchor=(0.5, -0.05), ncol=2, frameon=False, fontsize=12)
+        plt.legend(title="", loc='upper center', bbox_to_anchor=(0.5, -0.05), ncol=2, frameon=False, fontsize=18)
 
-        output_path = os.path.join(RESULTS_DIR, f"Violin_Sync_{city_name}.png")
+        # ----------------------------------------------------
+        # EXPORT 1: NO HEADING (For Paper)
+        # ----------------------------------------------------
+        path_clean = os.path.join(RESULTS_DIR, f"Violin_Sync_{city_name}_NoHeading.png")
         plt.tight_layout()
-        plt.savefig(output_path, dpi=600)
+        plt.savefig(path_clean, dpi=600)
+        print(f"    -> Saved NoHeading violin plot: {path_clean}")
+
+        # ----------------------------------------------------
+        # EXPORT 2: WITH HEADING (For Reference)
+        # ----------------------------------------------------
+        # Add the title now
+        plt.title(f"Station Synchronization: {city_name}\n(Left: Bike Rentals+Returns | Right: Train Arr+Dep)",
+                  fontsize=20, fontweight='bold')
+
+        # Re-adjust layout to accommodate title
+        plt.tight_layout()
+
+        path_titled = os.path.join(RESULTS_DIR, f"Violin_Sync_{city_name}_Titled.png")
+        plt.savefig(path_titled, dpi=600)
+        print(f"    -> Saved Titled violin plot: {path_titled}")
+
         plt.close()
-        print(f"    -> Saved enhanced violin plot to: {output_path}")
 
     except Exception as e:
         print(f"    [!] Error plotting violin: {e}")
