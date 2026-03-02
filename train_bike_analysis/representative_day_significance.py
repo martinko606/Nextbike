@@ -181,7 +181,7 @@ def evaluate_representative_days():
         df_res = pd.DataFrame(results)
 
         # Ensure output directory exists
-        out_dir = 'results'
+        out_dir = '../results'
         if not os.path.exists(out_dir): os.makedirs(out_dir)
 
         out_path = os.path.join(out_dir, 'Representative_Day_Significance.csv')

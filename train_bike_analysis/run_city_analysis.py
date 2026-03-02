@@ -11,11 +11,11 @@ from plotly.subplots import make_subplots
 # ==========================================
 # 1. GLOBAL FILE CONFIGURATION
 # ==========================================
-FILE_BIKE_DATA = 'data/nextbike_data_VSB_Vaclavik.xlsx'
-FILE_REBALANCING = 'data/nextbike_data_VSB_Vaclavik2.xlsx'
+FILE_BIKE_DATA = '../data/nextbike_data_VSB_Vaclavik.xlsx'
+FILE_REBALANCING = '../data/nextbike_data_VSB_Vaclavik2.xlsx'
 
 # Output Directory
-RESULTS_DIR = 'results'
+RESULTS_DIR = '../results'
 
 # ==========================================
 # 2. CITY NETWORK MAP

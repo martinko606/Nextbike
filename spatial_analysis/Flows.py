@@ -7,11 +7,11 @@ import os  # <--- Added to handle directories
 # 1. SETUP & DATA
 # ==========================================
 # Define output directory
-OUTPUT_DIR = os.path.join("results", "maps")
+OUTPUT_DIR = os.path.join("../results", "maps")
 # Create directory if it doesn't exist
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-file_path = 'C:/Users/vaclavikmartin/PycharmProjects/Nextbike/data/nextbike_data_VSB_Vaclavik.xlsx'
+file_path = '/data/nextbike_data_VSB_Vaclavik.xlsx'
 
 # Station Names
 STATION_SVINOV = 'SV-Svinov nádraží *(navíc 15min na odjezd)'

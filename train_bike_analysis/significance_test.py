@@ -10,8 +10,8 @@ import transport_analytics as ta
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-FILE_BIKE_DATA = 'data/nextbike_data_VSB_Vaclavik.xlsx'
-RESULTS_DIR = 'results'
+FILE_BIKE_DATA = '../data/nextbike_data_VSB_Vaclavik.xlsx'
+RESULTS_DIR = '../results'
 ALPHA = 0.05
 
 CITIES = {

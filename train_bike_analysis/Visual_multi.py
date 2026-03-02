@@ -67,9 +67,9 @@ VIS_END = '2025-10-19'
 ZOOM_DAY_START = '2025-09-27 00:00'
 ZOOM_DAY_END = '2025-09-27 23:59'
 
-FILE_TRAINS = 'data/Pohyby_Svinov.xlsx'
-FILE_BIKES = 'data/nextbike_data_VSB_Vaclavik.xlsx'
-FILE_WEATHER = 'data/Ostrava_pocasi.xlsx'
+FILE_TRAINS = '../data/Pohyby_Svinov.xlsx'
+FILE_BIKES = '../data/nextbike_data_VSB_Vaclavik.xlsx'
+FILE_WEATHER = '../data/Ostrava_pocasi.xlsx'
 SHEET_RENTALS = 'Vypujcky_Ostrava'
 
 STATION_CONFIG = {

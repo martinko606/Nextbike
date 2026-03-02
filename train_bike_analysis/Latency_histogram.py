@@ -11,8 +11,8 @@ CITY_KEY = 'Ostrava-Svinov'
 VIS_START = '2025-09-15'
 VIS_END = '2025-10-19'
 
-FILE_TRAINS = 'data/Pohyby_Svinov.xlsx'
-FILE_BIKES = 'data/nextbike_data_VSB_Vaclavik.xlsx'
+FILE_TRAINS = '../data/Pohyby_Svinov.xlsx'
+FILE_BIKES = '../data/nextbike_data_VSB_Vaclavik.xlsx'
 SHEET_RENTALS = 'Vypujcky_Ostrava'
 
 STATION_CONFIG = {

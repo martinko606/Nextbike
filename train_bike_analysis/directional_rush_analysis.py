@@ -7,8 +7,8 @@ import transport_analytics as ta
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-FILE_BIKE_DATA = 'data/nextbike_data_VSB_Vaclavik.xlsx'
-RESULTS_DIR = 'results'
+FILE_BIKE_DATA = '../data/nextbike_data_VSB_Vaclavik.xlsx'
+RESULTS_DIR = '../results'
 
 # Define Rush Hours (Adjust these hours if your local rush is different)
 AM_START, AM_END = 5, 9  # 05:00 to 08:59
