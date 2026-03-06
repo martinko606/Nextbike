@@ -4,13 +4,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import datetime
 import warnings
 import requests
+import re
 import geopandas as gpd
 
 warnings.filterwarnings("ignore")
 
 # ==============================================================================
 # DEPENDENCIES CHECK
-# r5py requires:
+#r5py requires:
 #   pip install r5py
 #   Java JDK 11+ must be installed and on PATH
 #
@@ -32,18 +33,18 @@ OUTPUT_DIR = os.path.join(REPO_ROOT, "results", "spatial_analysis")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ── Departure configuration ───────────────────────────────────────────────────
-DEPARTURE_DATETIME = datetime.datetime(2025, 4, 1, 8, 0)   # date + time of departure
+DEPARTURE_DATETIME = datetime.datetime(2026, 2, 26, 8, 0)   # date + time of departure
 
 # How many minutes around the departure time R5 samples to account for
 # timetable uncertainty (e.g. 10 = samples departures 08:00–08:10 every minute,
 # returns median travel time). Increase for more robust results, decrease for speed.
-TIME_WINDOW_MINUTES = 10
+TIME_WINDOW_MINUTES = 20
 
-TIME_BUDGETS = [30, 60]   # minutes — total budget including transit + walking
+TIME_BUDGETS = [15, 30]   # minutes — total budget including transit + walking
 
 # ── Walking parameters ────────────────────────────────────────────────────────
 WALK_SPEED_KMH       = 5.0    # km/h — used for access, egress and transfers
-MAX_WALK_MINUTES     = 20     # maximum walking time for any single leg
+MAX_WALK_MINUTES     = 15     # maximum walking time for any single leg
                                # (access to first stop, transfers, egress from last stop)
 
 # ── City configuration ────────────────────────────────────────────────────────
@@ -52,16 +53,36 @@ MAX_WALK_MINUTES     = 20     # maximum walking time for any single leg
 # api_names   : Nextbike API city name(s) — must match API exactly (with diacritics)
 # origins     : Nextbike station names to use as origins
 CITY_CONFIG = {
-    "Brno": {
-        "gtfs_file": "brno.zip",
-        "osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
-        "api_names": "Brno",
-        "origins": ["Hlavní nádraží - Hlavní vstup"],
-    },
-    # "Ostrava": {
+
+    #"Ostrava": {
     #     "gtfs_file": "ostrava.zip",
-    #     "osm_file":  "czech-republic-260303.osm.pbff",  # same file
-    #     ...
+    #     "osm_file":  "czech-republic-260303.osm.pbf",  # same file
+    #     "api_names": "Ostrava",
+        # "origins": ["SV-Svinov nádraží *(navíc 15min na odjezd)"],
+     #},
+    "Ostrava_hlavni": {
+        "gtfs_file": "ostrava.zip",
+        "osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
+        "api_names": "Ostrava",
+        "origins": ["MOAP-Hlavní nádraží"],
+     },
+    #"Brno": {
+     #"gtfs_file": "brno.zip",
+     #"osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
+     #"api_names": "Brno",
+     #"origins": ["Hlavní nádraží - Hlavní vstup"],
+     #},
+    # "Přerov": {
+    # "gtfs_file": "XXXXX.zip",
+    # "osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
+    # "api_names": "Přerov",
+    # "origins": ["Nádraží"],
+    # },
+    # "ValMez": {
+    # "gtfs_file": "XXXX.zip",
+    # "osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
+    # "api_names": ["Valašské Meziříčí", "Poličná", "Krhová", "Zašová"],
+    # "origins": ["Vlakové nádraží Valašské Meziříčí (nové umístění)"],
     # },
 }
 
@@ -183,9 +204,9 @@ if __name__ == "__main__":
               f"| Budgets {TIME_BUDGETS} min ---")
 
         for station_name, origin_lat, origin_lon in origin_coords:
-            station_slug = (station_name.lower()
-                            .replace(" ", "_").replace("-", "").replace("/", "_"))
-            city_prefix  = f"pt_{city_key}_{station_slug}"
+            station_slug = re.sub(r'[^\w\s-]', '', station_name.lower())
+            station_slug = re.sub(r'[\s]+', '_', station_slug).strip('_')
+            city_prefix = f"pt_{city_key}_{station_slug}"
 
             # Build origin as a GeoDataFrame (r5py expects this)
             origin_gdf = gpd.GeoDataFrame(
@@ -218,18 +239,22 @@ if __name__ == "__main__":
                     r5py.TransportMode.WALK,
                 ],
                 isochrones=[datetime.timedelta(minutes=m) for m in TIME_BUDGETS],
-                walk_speed=WALK_SPEED_KMH,
-                max_walk_time=datetime.timedelta(minutes=MAX_WALK_MINUTES),
+                speed_walking=WALK_SPEED_KMH,
+                max_time_walking=datetime.timedelta(minutes=MAX_WALK_MINUTES),
             )
 
             # Save each time budget as a separate GeoJSON
             for mins in TIME_BUDGETS:
                 budget_td = datetime.timedelta(minutes=mins)
-                layer = isochrones[isochrones["travel_time"] == budget_td]
+                layer = isochrones[isochrones["travel_time"] == budget_td].copy()
 
                 if layer.empty:
                     print(f"  [!] No isochrone polygon produced for {mins} min.")
                     continue
+
+                # Convert timedelta column to plain integer minutes for GeoJSON
+                layer["travel_time_min"] = mins
+                layer = layer.drop(columns=["travel_time"])
 
                 depart_str = DEPARTURE_DATETIME.strftime("%H%M")
                 out_file = os.path.join(

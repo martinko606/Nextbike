@@ -8,6 +8,7 @@ import networkx as nx
 import geopandas as gpd
 import requests
 import warnings
+import re
 from math import radians, cos, sin, asin, sqrt as msqrt
 from shapely.ops import unary_union
 
@@ -21,6 +22,7 @@ BOUNDARY_BUFFER_M     = 30    # frontier walk edge buffer — OSMnx fallback
 BIKE_BUFFER_M         = 40    # own-bike polygon edge buffer (metres, projected)
 DISSOLVE_BRIDGE_M     = 150   # gap-bridging buffer for dissolve pass
 WALK_SPEED_MS         = 5 / 3.6    # 5 km/h in m/s
+STATIONS_CACHE_TTL_HOURS = 24   # refresh station cache if older than this
 
 # Physics floor: predictions cannot imply faster than this average speed.
 MAX_CYCLING_SPEED_MS  = 15 / 3.6   # 15 km/h in m/s
@@ -42,22 +44,50 @@ def _haversine(lat1, lon1, lat2, lon2):
     return 2 * R * asin(msqrt(sin(dp/2)**2 + cos(p1) * cos(p2) * sin(dl/2)**2))
 
 
-def get_official_nextbike_stations(city_names):
+def get_official_nextbike_stations(city_names, cache_path, ttl_hours=24):
     """
-    Fetch stations for one city name or a list of city names.
-    Use a list when the system is split across multiple API entries
-    (e.g. Valasske Mezirici + outlying villages Policna, Krhova, Zasova).
+    Fetch Nextbike stations from cache if fresh, otherwise download from API
+    and save to cache. Cache is a simple JSON file at cache_path.
+
+    Parameters
+    ----------
+    city_names  : str or list of str — Nextbike API city names (with diacritics)
+    cache_path  : full path to the JSON cache file
+    ttl_hours   : hours before cache is considered stale and re-downloaded
     """
+    import json
+    import time
+
     if isinstance(city_names, str):
         city_names = [city_names]
 
+    # Load from cache if it exists and is fresh
+    if os.path.exists(cache_path):
+        age_hours = (time.time() - os.path.getmtime(cache_path)) / 3600
+        if age_hours < ttl_hours:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                stations = json.load(f)
+            print(f"  -> Stations loaded from cache ({age_hours:.1f}h old, "
+                  f"TTL={ttl_hours}h): {len(stations)} stations.")
+            return stations
+        else:
+            print(f"  -> Station cache is {age_hours:.1f}h old (TTL={ttl_hours}h) "
+                  f"— refreshing from API...")
+
+    # Download from API
     url = "https://api.nextbike.net/maps/nextbike-live.json"
     all_stations = []
     try:
         response = requests.get(url, timeout=10)
         if response.status_code != 200:
             print(f"     [!] API returned status {response.status_code}")
+            # Fall back to stale cache if available
+            if os.path.exists(cache_path):
+                print(f"     [!] Using stale cache as fallback.")
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
             return []
+
         data = response.json()
         for country in data.get("countries", []):
             for city in country.get("cities", []):
@@ -73,10 +103,24 @@ def get_official_nextbike_stations(city_names):
                             })
                     print(f"  -> '{city['name']}': {len(found)} stations fetched.")
                     all_stations.extend(found)
+
+    except requests.exceptions.ConnectionError:
+        print(f"     [!] No internet connection.")
+        if os.path.exists(cache_path):
+            print(f"     [!] Using stale cache as fallback.")
+            with open(cache_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return []
     except Exception as e:
         print(f"     [!] API error: {e}")
+        return []
 
-    print(f"  -> Total stations fetched: {len(all_stations)}")
+    # Save to cache
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    with open(cache_path, "w", encoding="utf-8") as f:
+        json.dump(all_stations, f, ensure_ascii=False, indent=2)
+    print(f"  -> Total stations fetched: {len(all_stations)} — "
+          f"saved to cache/stations/{os.path.basename(cache_path)}")
     return all_stations
 
 
@@ -121,34 +165,30 @@ def _build_r5py_walk_network(osm_pbf_path):
         return None
 
 
-def _r5py_walk_polygons(r5py_network, station_rows, total_sec, depart_datetime):
+def _r5py_walk_polygons(r5py_network, station_rows, depart_datetime):
     """
-    For each schedulable dock station, compute a walk isochrone using r5py.
+    Compute walk isochrones for ALL stations in a single r5py batch call
+    using TravelTimeMatrix.
 
-    R5 routes egress walk on real OSM streets — much more accurate than
-    circle buffers, and geometrically correct unlike the OSMnx boundary-edge
-    method which only approximates the frontier.
+    Workflow:
+      1. Generate a regular grid of destination points over the station area
+      2. One TravelTimeMatrix call: all stations -> all grid points, WALK mode
+      3. For each station, keep grid points where travel_time <= remaining budget
+      4. Buffer reachable points and union into a polygon
 
-    Parameters
-    ----------
-    r5py_network  : r5py.TransportNetwork (walk-only)
-    station_rows  : list of dicts with keys: name, lat, lon, remaining_walk_sec
-    total_sec     : total time budget in seconds (used for departure time)
-    depart_datetime : datetime of the bike departure from origin
-
-    Returns
-    -------
-    list of Shapely polygons (EPSG:32633) or None if r5py fails
+    This is one R5 routing job regardless of station count — much faster
+    than one Isochrones call per station.
     """
     import r5py
     import datetime
+    from shapely.geometry import box
 
     if not station_rows:
         return []
 
     origins_gdf = gpd.GeoDataFrame(
         {
-            "id":                [r["name"] for r in station_rows],
+            "id":                 [r["name"] for r in station_rows],
             "remaining_walk_sec": [r["remaining_walk_sec"] for r in station_rows],
         },
         geometry=gpd.points_from_xy(
@@ -156,47 +196,86 @@ def _r5py_walk_polygons(r5py_network, station_rows, total_sec, depart_datetime):
             [r["lat"] for r in station_rows],
         ),
         crs="EPSG:4326",
+    ).reset_index(drop=True)
+
+    # Build a regular grid of destination points over the bounding box
+    # of all stations + max possible walk radius
+    max_remaining   = max(r["remaining_walk_sec"] for r in station_rows)
+    max_walk_m      = max_remaining * WALK_SPEED_MS
+
+    origins_proj    = origins_gdf.to_crs(epsg=32633)
+    bounds          = origins_proj.total_bounds   # minx, miny, maxx, maxy
+    grid_spacing_m  = 50   # metres between grid points — increase for speed, decrease for precision
+
+    xs = np.arange(bounds[0] - max_walk_m, bounds[2] + max_walk_m, grid_spacing_m)
+    ys = np.arange(bounds[1] - max_walk_m, bounds[3] + max_walk_m, grid_spacing_m)
+    grid_pts_proj = gpd.GeoDataFrame(
+        geometry=[
+            gpd.points_from_xy([x], [y])[0]
+            for x in xs for y in ys
+        ],
+        crs="EPSG:32633",
     )
+    grid_pts_proj["id"] = range(len(grid_pts_proj))
+    destinations_gdf = grid_pts_proj.to_crs(epsg=4326)
+
+    print(f"     Grid: {len(destinations_gdf)} points at {grid_spacing_m}m spacing.")
+
+    try:
+        # Single batch call: all stations -> all grid points, walk only
+        ttm = r5py.TravelTimeMatrix(
+            r5py_network,
+            origins=origins_gdf,
+            destinations=destinations_gdf,
+            departure=depart_datetime,
+            departure_time_window=datetime.timedelta(minutes=1),
+            transport_modes=[r5py.TransportMode.WALK],
+            speed_walking=WALK_SPEED_KMH,
+            snap_to_network=True,
+        )
+    except Exception as e:
+        print(f"     [!] r5py TravelTimeMatrix failed: {e}")
+        return []
+
+    if ttm.empty:
+        print(f"     [!] TravelTimeMatrix returned no results.")
+        return []
+
+    # ttm columns: from_id, to_id, travel_time (in minutes as int)
+    # Join grid point geometries for polygon building
+    dest_lookup = destinations_gdf.set_index("id")[["geometry"]].to_crs(epsg=32633)
+    ttm["travel_time_sec"] = pd.to_numeric(ttm["travel_time"], errors="coerce") * 60
 
     polygons_proj = []
 
-    for _, row in origins_gdf.iterrows():
-        remaining_sec = row["remaining_walk_sec"]
-        remaining_min = remaining_sec / 60
+    for _, station in origins_gdf.iterrows():
+        station_id    = station["id"]
+        remaining_sec = station["remaining_walk_sec"]
 
-        origin_single = gpd.GeoDataFrame(
-            {"id": [row["id"]]},
-            geometry=[row.geometry],
-            crs="EPSG:4326",
-        )
+        # Filter grid points reachable within this station's remaining budget
+        reachable = ttm[
+            (ttm["from_id"] == station_id) &
+            (ttm["travel_time_sec"] <= remaining_sec)
+        ]
 
-        try:
-            # Isochrone: walk from dock station for remaining_walk_sec
-            # Uses actual OSM street network — no circle approximation
-            isochrone = r5py.Isochrones(
-                r5py_network,
-                origins=origin_single,
-                departure=depart_datetime,
-                departure_time_window=datetime.timedelta(minutes=1),
-                transport_modes=[r5py.TransportMode.WALK],
-                isochrones=[datetime.timedelta(seconds=remaining_sec)],
-                speed_walking=WALK_SPEED_KMH,
-            )
-
-            if isochrone.empty:
-                continue
-
-            # Reproject to EPSG:32633 for consistent metric operations
-            poly_proj = isochrone.to_crs(epsg=32633).geometry.unary_union
-            if poly_proj and not poly_proj.is_empty:
-                polygons_proj.append(poly_proj)
-
-        except Exception as e:
-            print(f"     [!] r5py walk failed for '{row['id']}': {e}")
+        if reachable.empty:
             continue
 
-    return polygons_proj
+        reachable_pts = dest_lookup.loc[
+            dest_lookup.index.isin(reachable["to_id"])
+        ].geometry
 
+        if reachable_pts.empty:
+            continue
+
+        # Buffer each reachable point and union
+        pt_buffers = reachable_pts.buffer(grid_spacing_m * 0.8)
+        poly = pt_buffers.unary_union
+
+        if poly and not poly.is_empty:
+            polygons_proj.append(poly)
+
+    return polygons_proj
 
 # ==============================================================================
 # ISOCHRONE GENERATORS — OSMnx FALLBACK
@@ -301,19 +380,22 @@ def generate_own_bike_polygon(G_bike_undirected, predicted_times_dict,
     return None
 
 
-def _dissolve_and_clip(polygons_proj, own_bike_poly_wgs84, station_envelope=None):
-    """
-    Union all blobs, bridge small gaps, reproject to WGS-84,
-    clip to own-bike boundary, then clip to station envelope.
-    """
+def _dissolve_and_clip(polygons_proj, own_bike_poly_wgs84, station_envelope=None,
+                       min_area_m2=8000):  # drop blobs smaller than 20,000 m² (~160x160m)
     raw_union = gpd.GeoSeries(polygons_proj, crs="EPSG:32633").unary_union
     dissolved = raw_union.buffer(DISSOLVE_BRIDGE_M).buffer(-DISSOLVE_BRIDGE_M)
-    final_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs="EPSG:32633").to_crs(epsg=4326)
-    final_gdf.geometry = final_gdf.geometry.intersection(own_bike_poly_wgs84)
-    if station_envelope is not None:
-        final_gdf.geometry = final_gdf.geometry.intersection(station_envelope)
-    return final_gdf
 
+    # Drop isolated tiny polygons — artifacts from single reachable grid points
+    from shapely.geometry import MultiPolygon, Polygon
+    if dissolved.geom_type == "MultiPolygon":
+        dissolved = MultiPolygon([p for p in dissolved.geoms if p.area >= min_area_m2])
+
+    final_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs="EPSG:32633").to_crs(epsg=4326)
+    final_gdf.geometry = final_gdf.geometry.buffer(0)
+    final_gdf.geometry = final_gdf.geometry.intersection(own_bike_poly_wgs84.buffer(0))
+    if station_envelope is not None:
+        final_gdf.geometry = final_gdf.geometry.intersection(station_envelope.buffer(0))
+    return final_gdf
 
 def _station_envelope(schedulable_gdf):
     """
@@ -450,7 +532,7 @@ def generate_shared_bike_isochrone(G_bike_undirected, G_walk, own_bike_poly,
             for _, row in schedulable.iterrows()
         ]
         r5_polys = _r5py_walk_polygons(
-            r5py_network, station_rows, total_sec, depart_datetime)
+            r5py_network, station_rows, depart_datetime)
         polygons_proj.extend(r5_polys)
         print(f"     r5py walk polygons computed: {len(r5_polys)}")
     else:
@@ -580,9 +662,14 @@ if __name__ == "__main__":
                 f"  Check 3 - columns: start_lat, start_lng, end_lat, end_lng, duration"
             )
 
-        # ── PHASE 2: Stations + graphs ────────────────────────────────────────
+            # ── PHASE 2: Stations + graphs ────────────────────────────────────────
+        city_key = MAPPING_CITY_NAME.lower().replace(" ", "_")
         api_names = CITY_API_NAMES.get(MAPPING_CITY_NAME, MAPPING_CITY_NAME)
-        stations  = get_official_nextbike_stations(api_names)
+        stations_cache = os.path.join(REPO_ROOT, "cache", "stations",
+                                          f"{city_key}_stations.json")
+        stations = get_official_nextbike_stations(
+            api_names, cache_path=stations_cache,
+            ttl_hours=STATIONS_CACHE_TTL_HOURS)
         if not stations:
             print(f"  [!] No stations returned for {MAPPING_CITY_NAME}, skipping.")
             continue
@@ -590,7 +677,6 @@ if __name__ == "__main__":
         first_lat, first_lon = resolve_origin_from_station_name(
             stations, ORIGIN_STATION_NAMES[0])
 
-        city_key        = MAPPING_CITY_NAME.lower().replace(" ", "_")
         bike_graph_file = os.path.join(CACHE_GRAPHS, f"{city_key}_bike_G.graphml")
         walk_graph_file = os.path.join(CACHE_GRAPHS, f"{city_key}_walk_G.graphml")
 
@@ -604,7 +690,7 @@ if __name__ == "__main__":
                 '["highway"]["area"!~"yes"]["access"!~"private"]'
                 '["highway"!~"motorway|motorway_link|trunk|trunk_link|steps"]'
                 '["surface"!~"dirt|sand|grass|mud"]'
-            )
+                )
             G_bike = ox.graph_from_point(
                 (first_lat, first_lon), dist=12000, custom_filter=urban_bike_filter)
             ox.save_graphml(G_bike, bike_graph_file)
@@ -709,8 +795,8 @@ if __name__ == "__main__":
         for ORIGIN_STATION_NAME in ORIGIN_STATION_NAMES:
             ORIGIN_LAT, ORIGIN_LON = resolve_origin_from_station_name(
                 stations, ORIGIN_STATION_NAME)
-            station_slug = (ORIGIN_STATION_NAME.lower()
-                            .replace(" ", "_").replace("-", "").replace("/", "_"))
+            station_slug = re.sub(r'[^\w\s-]', '', ORIGIN_STATION_NAME.lower())
+            station_slug = re.sub(r'[\s]+', '_', station_slug).strip('_')
             city_prefix  = f"{city_key}_{station_slug}"
 
             for mins in TIME_BUDGETS:

@@ -8,6 +8,7 @@ import networkx as nx
 import geopandas as gpd
 import requests
 import warnings
+import re
 from math import radians, cos, sin, asin, sqrt as msqrt
 from shapely.ops import unary_union
 
@@ -521,8 +522,8 @@ if __name__ == "__main__":
         for ORIGIN_STATION_NAME in ORIGIN_STATION_NAMES:
             ORIGIN_LAT, ORIGIN_LON = resolve_origin_from_station_name(
                 stations, ORIGIN_STATION_NAME)
-            station_slug = (ORIGIN_STATION_NAME.lower()
-                            .replace(" ", "_").replace("-", "").replace("/", "_"))
+            station_slug = re.sub(r'[^\w\s-]', '', ORIGIN_STATION_NAME.lower())
+            station_slug = re.sub(r'[\s]+', '_', station_slug).strip('_')
             city_prefix  = f"{city_key}_{station_slug}"
 
             for mins in TIME_BUDGETS:
