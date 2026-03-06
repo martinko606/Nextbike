@@ -1,0 +1,23 @@
+# Large OSM data files — download manually from Geofabrik
+data/osm/*.pbf
+data/osm/*.osm
+
+# Cache files — generated locally, not needed in repo
+cache/graphs/*.graphml
+cache/models/*.pkl
+cache/elevations/*.json
+cache/stations/*.json
+
+# GTFS zip files — download manually
+data/gtfs/*.zip
+
+# Python virtual environment
+.venv/
+__pycache__/
+*.pyc
+
+# PyCharm project files
+.idea/
+
+# Results — generated outputs
+results/
