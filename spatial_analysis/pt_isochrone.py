@@ -73,7 +73,7 @@ CITY_CONFIG = {
      #"origins": ["Hlavní nádraží - Hlavní vstup"],
      #},
     # "Přerov": {
-    # "gtfs_file": "XXXXX.zip",
+    # "gtfs_file": "prerov.zip",
     # "osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
     # "api_names": "Přerov",
     # "origins": ["Nádraží"],
@@ -200,68 +200,46 @@ if __name__ == "__main__":
         )
 
         # ── PHASE 3: Isochrones per origin per time budget ───────────────────
+        # Create city-specific subdirectory (e.g., results/spatial_analysis/ostrava/)
+        city_output_dir = os.path.join(OUTPUT_DIR, city_key)
+        os.makedirs(city_output_dir, exist_ok=True)
+
         print(f"\n--- PHASE 3: ISOCHRONES | Depart {DEPARTURE_DATETIME} "
               f"| Budgets {TIME_BUDGETS} min ---")
 
         for station_name, origin_lat, origin_lon in origin_coords:
-            station_slug = re.sub(r'[^\w\s-]', '', station_name.lower())
-            station_slug = re.sub(r'[\s]+', '_', station_slug).strip('_')
-            city_prefix = f"pt_{city_key}_{station_slug}"
-
-            # Build origin as a GeoDataFrame (r5py expects this)
+            # Build origin as a GeoDataFrame
             origin_gdf = gpd.GeoDataFrame(
                 {"id": [station_name]},
                 geometry=gpd.points_from_xy([origin_lon], [origin_lat]),
                 crs="EPSG:4326",
             )
 
-            print(f"\n  -> Computing isochrones for '{station_name}'...")
-            print(f"     Depart: {DEPARTURE_DATETIME}  |  "
-                  f"Time window: {TIME_WINDOW_MINUTES} min  |  "
-                  f"Budgets: {TIME_BUDGETS} min")
-            print(f"     Walk speed: {WALK_SPEED_KMH} km/h  |  "
-                  f"Max walk per leg: {MAX_WALK_MINUTES} min")
-
-            # r5py.Isochrones:
-            #   - Samples departures every minute over TIME_WINDOW_MINUTES
-            #   - Returns median travel time to every node in the street network
-            #   - Accounts for egress walk on real streets (not circle buffers)
-            #   - All three walk legs (access, transfer, egress) use WALK_SPEED_KMH
-            #   - MAX_WALK_MINUTES caps each individual walk leg independently
-            #   - Returns a GeoDataFrame with columns: travel_time, geometry
             isochrones = r5py.Isochrones(
                 transport_network,
                 origins=origin_gdf,
                 departure=DEPARTURE_DATETIME,
                 departure_time_window=datetime.timedelta(minutes=TIME_WINDOW_MINUTES),
-                transport_modes=[
-                    r5py.TransportMode.TRANSIT,
-                    r5py.TransportMode.WALK,
-                ],
+                transport_modes=[r5py.TransportMode.TRANSIT, r5py.TransportMode.WALK],
                 isochrones=[datetime.timedelta(minutes=m) for m in TIME_BUDGETS],
                 speed_walking=WALK_SPEED_KMH,
                 max_time_walking=datetime.timedelta(minutes=MAX_WALK_MINUTES),
             )
 
-            # Save each time budget as a separate GeoJSON
+            # Save according to new naming convention
             for mins in TIME_BUDGETS:
                 budget_td = datetime.timedelta(minutes=mins)
                 layer = isochrones[isochrones["travel_time"] == budget_td].copy()
 
                 if layer.empty:
-                    print(f"  [!] No isochrone polygon produced for {mins} min.")
                     continue
 
-                # Convert timedelta column to plain integer minutes for GeoJSON
                 layer["travel_time_min"] = mins
                 layer = layer.drop(columns=["travel_time"])
 
-                depart_str = DEPARTURE_DATETIME.strftime("%H%M")
-                out_file = os.path.join(
-                    OUTPUT_DIR,
-                    f"isochrone_{city_prefix}_{mins}min_depart{depart_str}.geojson"
-                )
+                # Standardized filename: isochrone_pt_15min.geojson
+                out_file = os.path.join(city_output_dir, f"isochrone_pt_{mins}min.geojson")
                 layer.to_file(out_file, driver="GeoJSON")
-                print(f"     Saved ({mins} min): {os.path.relpath(out_file)}")
+                print(f"     Saved PT Isochrone: {os.path.relpath(out_file)}")
 
     print("\n*** ALL PT ISOCHRONES COMPLETED! ***")

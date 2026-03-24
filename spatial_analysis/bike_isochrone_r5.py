@@ -623,9 +623,9 @@ if __name__ == "__main__":
     CITY_DURATION_FILTER = {
         "Valasske Mezirici": (60,  1800),
         "Prerov":            (60,  1800),
-        "Ostrava":           (120, 3600),
-        "Ostrava hlavni":    (120, 3600),
-        "Brno":              (120, 4500),
+        "Ostrava":           (60, 3600),
+        "Ostrava hlavni":    (60, 3600),
+        "Brno":              (60, 4500),
     }
 
     TIME_BUDGETS = [15, 30]   # minutes
@@ -789,32 +789,39 @@ if __name__ == "__main__":
             projected_walk_edges = _project_graph_edges(G_walk)
             print(f"  -> {len(projected_walk_edges)} walk edges ready.")
 
-        # ── PHASE 6: Isochrones ───────────────────────────────────────────────
-        print(f"\n--- PHASE 6: ISOCHRONES FOR {MAPPING_CITY_NAME.upper()} "
-              f"| {TIME_BUDGETS} MIN ---")
-        for ORIGIN_STATION_NAME in ORIGIN_STATION_NAMES:
-            ORIGIN_LAT, ORIGIN_LON = resolve_origin_from_station_name(
-                stations, ORIGIN_STATION_NAME)
-            station_slug = re.sub(r'[^\w\s-]', '', ORIGIN_STATION_NAME.lower())
-            station_slug = re.sub(r'[\s]+', '_', station_slug).strip('_')
-            city_prefix  = f"{city_key}_{station_slug}"
+            # ── PHASE 6: ISOCHRONES FOR {CITY} ────────────────────────────────────
+            # Create city-specific subdirectory
+            city_output_dir = os.path.join(OUTPUT_DIR, city_key)
+            os.makedirs(city_output_dir, exist_ok=True)
 
-            for mins in TIME_BUDGETS:
-                poly_own = generate_own_bike_polygon(
-                    G_bike_undirected, predicted_times_dict, mins,
-                    os.path.join(OUTPUT_DIR,
-                                 f"isochrone_{city_prefix}_own_bike_{mins}min.geojson"),
-                )
-                if poly_own is not None:
-                    generate_shared_bike_isochrone(
-                        G_bike_undirected, G_walk, poly_own,
-                        predicted_times_dict, stations,
-                        ORIGIN_LAT, ORIGIN_LON, mins,
-                        os.path.join(OUTPUT_DIR,
-                                     f"isochrone_{city_prefix}_shared_bike_{mins}min.geojson"),
-                        projected_walk_edges=projected_walk_edges,
-                        r5py_network=r5py_network,
-                        depart_datetime=DEPART_DATETIME,
+            print(f"\n--- PHASE 6: ISOCHRONES FOR {MAPPING_CITY_NAME.upper()} | {TIME_BUDGETS} MIN ---")
+
+            for ORIGIN_STATION_NAME in ORIGIN_STATION_NAMES:
+                ORIGIN_LAT, ORIGIN_LON = resolve_origin_from_station_name(stations, ORIGIN_STATION_NAME)
+
+                for mins in TIME_BUDGETS:
+                    # 1. Own Bike Naming
+                    own_bike_filename = os.path.join(city_output_dir, f"isochrone_own_bike_{mins}min.geojson")
+
+                    poly_own = generate_own_bike_polygon(
+                        G_bike_undirected,
+                        predicted_times_dict,
+                        mins,
+                        own_bike_filename
                     )
+
+                    # 2. Shared Bike Naming
+                    if poly_own is not None:
+                        shared_bike_filename = os.path.join(city_output_dir, f"isochrone_shared_bike_{mins}min.geojson")
+
+                        generate_shared_bike_isochrone(
+                            G_bike_undirected, G_walk, poly_own,
+                            predicted_times_dict, stations,
+                            ORIGIN_LAT, ORIGIN_LON, mins,
+                            shared_bike_filename,
+                            projected_walk_edges=projected_walk_edges,
+                            r5py_network=r5py_network,
+                            depart_datetime=DEPART_DATETIME,
+                        )
 
     print("\n*** ALL MAPS SUCCESSFULLY COMPLETED! ***")
