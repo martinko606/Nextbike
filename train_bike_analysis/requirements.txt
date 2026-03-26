@@ -1,5 +1,0 @@
-matplotlib
-seaborn
-folium
-plotly
-pandas
