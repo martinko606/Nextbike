@@ -1,16 +1,12 @@
-# Ignore the entire results folder (Maps and GeoJSONs)
-results/
+# Ignore the raw OSM map data folder
+data/osm/
 
-# Ignore the heavy graph and elevation caches
-cache/
+# Catch-all for large spatial data formats
+*.osm.pbf
 *.graphml
-*_network_elevations.json
-*_training_elevations.json
+*.geojson
 
-# Ignore the raw Excel data (optional, but good if it's large)
-data/*.xlsx
-
-# Ignore Python environment and bytecode
-__pycache__/
-*.pyc
-.venv/
+# Ignore results and temporary caches
+results/
+cache/
+*.json
