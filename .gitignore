@@ -1,0 +1,12 @@
+# Ignore the raw OSM map data folder
+data/osm/
+
+# Catch-all for large spatial data formats
+*.osm.pbf
+*.graphml
+*.geojson
+
+# Ignore results and temporary caches
+results/
+cache/
+*.json

@@ -1,0 +1,28 @@
+Metadata-Version: 2.1
+Name: ml-engine
+Version: 0.1
+Summary: Machine learning engine
+Home-page: https://github.com/Professor-G/ml-engine
+Author: Daniel Godines
+Author-email: danielgodinez123@gmail.com
+License: GPL-3.0
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Developers
+Classifier: Topic :: Software Development :: Build Tools
+Classifier: License :: OSI Approved :: GNU General Public License v3 (GPLv3)
+Classifier: Programming Language :: Python :: 3
+Requires-Python: >=3.7,<4
+License-File: LICENSE.txt
+Requires-Dist: numpy
+Requires-Dist: scikit-learn
+Requires-Dist: scikit-optimize
+Requires-Dist: astropy
+Requires-Dist: scipy
+Requires-Dist: peakutils
+Requires-Dist: progress
+Requires-Dist: matplotlib
+Requires-Dist: missingpy
+Requires-Dist: optuna
+Requires-Dist: boruta
+Requires-Dist: xgboost
+
