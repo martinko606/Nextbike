@@ -1,23 +1,16 @@
-# Large OSM data files — download manually from Geofabrik
-data/osm/*.pbf
-data/osm/*.osm
+# Ignore the entire results folder (Maps and GeoJSONs)
+results/
 
-# Cache files — generated locally, not needed in repo
-cache/graphs/*.graphml
-cache/models/*.pkl
-cache/elevations/*.json
-cache/stations/*.json
+# Ignore the heavy graph and elevation caches
+cache/
+*.graphml
+*_network_elevations.json
+*_training_elevations.json
 
-# GTFS zip files — download manually
-data/gtfs/*.zip
+# Ignore the raw Excel data (optional, but good if it's large)
+data/*.xlsx
 
-# Python virtual environment
-.venv/
+# Ignore Python environment and bytecode
 __pycache__/
 *.pyc
-
-# PyCharm project files
-.idea/
-
-# Results — generated outputs
-results/
+.venv/
