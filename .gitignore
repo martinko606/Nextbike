@@ -1,0 +1,14 @@
+# IDE and Environment
+.idea/
+.venv/
+__pycache__/
+
+# Large Data and Caches
+cache/
+models/
+Analysis_Results/
+data/osm/
+
+
+# Ignore all generated map results
+results/
