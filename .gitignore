@@ -1,12 +1,14 @@
-# Ignore the raw OSM map data folder
+# IDE and Environment
+.idea/
+.venv/
+__pycache__/
+
+# Large Data and Caches
+cache/
+models/
+Analysis_Results/
 data/osm/
 
-# Catch-all for large spatial data formats
-*.osm.pbf
-*.graphml
-*.geojson
 
-# Ignore results and temporary caches
+# Ignore all generated map results
 results/
-cache/
-*.json
