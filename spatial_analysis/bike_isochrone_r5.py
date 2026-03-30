@@ -81,7 +81,6 @@ def get_official_nextbike_stations(city_names, cache_path, ttl_hours=24):
         response = requests.get(url, timeout=10)
         if response.status_code != 200:
             print(f"     [!] API returned status {response.status_code}")
-            # Fall back to stale cache if available
             if os.path.exists(cache_path):
                 print(f"     [!] Using stale cache as fallback.")
                 with open(cache_path, "r", encoding="utf-8") as f:
@@ -205,7 +204,7 @@ def _r5py_walk_polygons(r5py_network, station_rows, depart_datetime):
 
     origins_proj    = origins_gdf.to_crs(epsg=32633)
     bounds          = origins_proj.total_bounds   # minx, miny, maxx, maxy
-    grid_spacing_m  = 50   # metres between grid points — increase for speed, decrease for precision
+    grid_spacing_m  = 50   # metres between grid points
 
     xs = np.arange(bounds[0] - max_walk_m, bounds[2] + max_walk_m, grid_spacing_m)
     ys = np.arange(bounds[1] - max_walk_m, bounds[3] + max_walk_m, grid_spacing_m)
@@ -222,7 +221,6 @@ def _r5py_walk_polygons(r5py_network, station_rows, depart_datetime):
     print(f"     Grid: {len(destinations_gdf)} points at {grid_spacing_m}m spacing.")
 
     try:
-        # Single batch call: all stations -> all grid points, walk only
         ttm = r5py.TravelTimeMatrix(
             r5py_network,
             origins=origins_gdf,
@@ -241,8 +239,6 @@ def _r5py_walk_polygons(r5py_network, station_rows, depart_datetime):
         print(f"     [!] TravelTimeMatrix returned no results.")
         return []
 
-    # ttm columns: from_id, to_id, travel_time (in minutes as int)
-    # Join grid point geometries for polygon building
     dest_lookup = destinations_gdf.set_index("id")[["geometry"]].to_crs(epsg=32633)
     ttm["travel_time_sec"] = pd.to_numeric(ttm["travel_time"], errors="coerce") * 60
 
@@ -252,7 +248,6 @@ def _r5py_walk_polygons(r5py_network, station_rows, depart_datetime):
         station_id    = station["id"]
         remaining_sec = station["remaining_walk_sec"]
 
-        # Filter grid points reachable within this station's remaining budget
         reachable = ttm[
             (ttm["from_id"] == station_id) &
             (ttm["travel_time_sec"] <= remaining_sec)
@@ -268,7 +263,6 @@ def _r5py_walk_polygons(r5py_network, station_rows, depart_datetime):
         if reachable_pts.empty:
             continue
 
-        # Buffer each reachable point and union
         pt_buffers = reachable_pts.buffer(grid_spacing_m * 0.8)
         poly = pt_buffers.unary_union
 
@@ -276,6 +270,7 @@ def _r5py_walk_polygons(r5py_network, station_rows, depart_datetime):
             polygons_proj.append(poly)
 
     return polygons_proj
+
 
 # ==============================================================================
 # ISOCHRONE GENERATORS — OSMnx FALLBACK
@@ -381,11 +376,10 @@ def generate_own_bike_polygon(G_bike_undirected, predicted_times_dict,
 
 
 def _dissolve_and_clip(polygons_proj, own_bike_poly_wgs84, station_envelope=None,
-                       min_area_m2=8000):  # drop blobs smaller than 20,000 m² (~160x160m)
+                       min_area_m2=8000):
     raw_union = gpd.GeoSeries(polygons_proj, crs="EPSG:32633").unary_union
     dissolved = raw_union.buffer(DISSOLVE_BRIDGE_M).buffer(-DISSOLVE_BRIDGE_M)
 
-    # Drop isolated tiny polygons — artifacts from single reachable grid points
     from shapely.geometry import MultiPolygon, Polygon
     if dissolved.geom_type == "MultiPolygon":
         dissolved = MultiPolygon([p for p in dissolved.geoms if p.area >= min_area_m2])
@@ -396,6 +390,7 @@ def _dissolve_and_clip(polygons_proj, own_bike_poly_wgs84, station_envelope=None
     if station_envelope is not None:
         final_gdf.geometry = final_gdf.geometry.intersection(station_envelope.buffer(0))
     return final_gdf
+
 
 def _station_envelope(schedulable_gdf):
     """
@@ -423,17 +418,14 @@ def generate_shared_bike_isochrone(G_bike_undirected, G_walk, own_bike_poly,
     polygons_proj = []
     reached_stations = []
 
-    # Determine walk method
     use_r5 = USE_R5PY_WALK and r5py_network is not None
     print(f"     Walk method: {'r5py (real streets)' if use_r5 else 'OSMnx boundary-edge (fallback)'}")
 
-    # 1. Pre-project walk edges if using OSMnx fallback
     if not use_r5 and projected_walk_edges is None:
         projected_walk_edges = _project_graph_edges(G_walk)
 
     # 2. Origin walk polygon
     if use_r5:
-        # r5py walk from origin for full time budget
         import r5py, datetime as dt
         origin_gdf = gpd.GeoDataFrame(
             {"id": ["origin"]},
@@ -448,7 +440,7 @@ def generate_shared_bike_isochrone(G_bike_undirected, G_walk, own_bike_poly,
                 departure_time_window=dt.timedelta(minutes=1),
                 transport_modes=[r5py.TransportMode.WALK],
                 isochrones=[dt.timedelta(seconds=total_sec)],
-                speed_walking=WALK_SPEED_KMH,  # ← was walk_speed
+                speed_walking=WALK_SPEED_KMH,
             )
             if not iso.empty:
                 polygons_proj.append(iso.to_crs(epsg=32633).geometry.unary_union)
@@ -479,7 +471,7 @@ def generate_shared_bike_isochrone(G_bike_undirected, G_walk, own_bike_poly,
                 output_filename, driver="GeoJSON")
         return
 
-    # 4. Nearest nodes (OSMnx — always needed for bike node lookup)
+    # 4. Nearest nodes
     valid_stations_gdf["bike_node"] = ox.distance.nearest_nodes(
         G_bike_undirected,
         X=valid_stations_gdf["lon"].values,
@@ -510,7 +502,7 @@ def generate_shared_bike_isochrone(G_bike_undirected, G_walk, own_bike_poly,
             "remaining_walk_min":   round(s["remaining_walk_sec"] / 60, 1),
         })
 
-    # 6. Station envelope (per-station walk budget circles)
+    # 6. Station envelope
     if not schedulable.empty:
         envelope = _station_envelope(schedulable)
         print(f"     Station envelope built from {len(schedulable)} stations "
@@ -521,7 +513,6 @@ def generate_shared_bike_isochrone(G_bike_undirected, G_walk, own_bike_poly,
     # 7. Walk polygons from dock stations
     print(f"     Computing dock station walk polygons...")
     if use_r5:
-        # r5py: real street-following walk polygons from each schedulable station
         station_rows = [
             {
                 "name":               row["name"],
@@ -531,12 +522,10 @@ def generate_shared_bike_isochrone(G_bike_undirected, G_walk, own_bike_poly,
             }
             for _, row in schedulable.iterrows()
         ]
-        r5_polys = _r5py_walk_polygons(
-            r5py_network, station_rows, depart_datetime)
+        r5_polys = _r5py_walk_polygons(r5py_network, station_rows, depart_datetime)
         polygons_proj.extend(r5_polys)
         print(f"     r5py walk polygons computed: {len(r5_polys)}")
     else:
-        # OSMnx fallback with dominance pruning
         station_rows = [
             {
                 "walk_node":          int(row["walk_node"]),
@@ -547,7 +536,7 @@ def generate_shared_bike_isochrone(G_bike_undirected, G_walk, own_bike_poly,
         osm_polys = _osmnx_walk_polygons(G_walk, projected_walk_edges, station_rows)
         polygons_proj.extend(osm_polys)
 
-    # 8. Dissolve + clip to own-bike boundary + clip to station envelope
+    # 8. Dissolve + clip
     if polygons_proj:
         final_gdf = _dissolve_and_clip(polygons_proj, own_bike_poly, station_envelope=envelope)
         final_gdf.to_file(output_filename, driver="GeoJSON")
@@ -574,52 +563,46 @@ if __name__ == "__main__":
 
     CACHE_GRAPHS = os.path.join(REPO_ROOT, "cache", "graphs")
     CACHE_ELEV   = os.path.join(REPO_ROOT, "cache", "elevations")
-    OSM_DIR      = os.path.join(REPO_ROOT, "data")
+    # ── FIX 2: OSM files live in data/osm/, not data/ ──────────────────────────
+    OSM_DIR      = os.path.join(REPO_ROOT, "data", "osm")
     OUTPUT_DIR   = os.path.join(REPO_ROOT, "results", "spatial_analysis")
     for d in [CACHE_GRAPHS, CACHE_ELEV, OUTPUT_DIR]:
         os.makedirs(d, exist_ok=True)
 
-    # Departure datetime — used by r5py for walk routing.
-    # Date does not affect walk-only routing but is required by the API.
     DEPART_DATETIME = datetime.datetime(2025, 4, 1, 8, 0)
 
     CITY_SHEET_MAPPING = {
-        # "Ostrava":           "Vypujcky_Ostrava",
-        # "Ostrava hlavni":    "Vypujcky_Ostrava",
-        # "Brno":              "Vypujcky_Brno",
-        # "Prerov":            "Vypujcky_Prerov",
+        "Ostrava":           "Vypujcky_Ostrava",
+        "Ostrava hlavni":    "Vypujcky_Ostrava",
+        "Brno":              "Vypujcky_Brno",
+        "Prerov":            "Vypujcky_Prerov",
         "Valasske Mezirici": "Vypujcky_ValMez",
     }
 
-    # Values must match Nextbike API city names EXACTLY (with diacritics)
     CITY_API_NAMES = {
-        # "Ostrava":           "Ostrava",
-        # "Ostrava hlavni":    "Ostrava hlavní",
-        # "Brno":              "Brno",
-        # "Prerov":            "Přerov",
+        "Ostrava":           "Ostrava",
+        "Ostrava hlavni":    "Ostrava",
+        "Brno":              "Brno",
+        "Prerov":            "Přerov",
         "Valasske Mezirici": ["Valašské Meziříčí", "Poličná", "Krhová", "Zašová"],
     }
 
-    # Station names must match Nextbike API EXACTLY (with diacritics)
     CITY_ORIGINS = {
-        # "Ostrava":        ["SV-Svinov nádraží *(navíc 15min na odjezd)"],
-        # "Ostrava hlavni": ["MOAP-Hlavní nádraží"],
-        # "Brno":           ["Hlavní nádraží - Hlavní vstup", "Hlavní nádraží - pošta"],
-        # "Prerov":         ["Nádraží"],
+        "Ostrava":        ["SV-Svinov nádraží *(navíc 15min na odjezd)"],
+        "Ostrava hlavni": ["MOAP-Hlavní nádraží"],
+        "Brno":           ["Hlavní nádraží - Hlavní vstup", "Hlavní nádraží - pošta", "Bajkazyl 666"],
+        "Prerov":         ["Nádraží"],
         "Valasske Mezirici": ["Vlakové nádraží Valašské Meziříčí (nové umístění)"],
     }
 
-    # OSM .pbf file per city — place in data/osm/
-    # All Czech cities can share one file: czech-republic-latest.osm.pbf
-    # Download: https://download.geofabrik.de/europe/czech-republic.html
     CITY_OSM_FILE = {
         "Valasske Mezirici": "czech-republic-260303.osm.pbf",
-        # "Ostrava":           "czech-republic-260303.osm.pbf",
-        # "Brno":              "czech-republic-260303.osm.pbf",
-        # "Prerov":            "czech-republic-260303.osm.pbf",
+        "Ostrava":           "czech-republic-260303.osm.pbf",
+        "Ostrava hlavni":    "czech-republic-260303.osm.pbf",
+        "Brno":              "czech-republic-260303.osm.pbf",
+        "Prerov":            "czech-republic-260303.osm.pbf",
     }
 
-    # Per-city duration filter (seconds).
     CITY_DURATION_FILTER = {
         "Valasske Mezirici": (60,  1800),
         "Prerov":            (60,  1800),
@@ -662,11 +645,11 @@ if __name__ == "__main__":
                 f"  Check 3 - columns: start_lat, start_lng, end_lat, end_lng, duration"
             )
 
-            # ── PHASE 2: Stations + graphs ────────────────────────────────────────
+        # ── PHASE 2: Stations + graphs ────────────────────────────────────────
         city_key = MAPPING_CITY_NAME.lower().replace(" ", "_")
         api_names = CITY_API_NAMES.get(MAPPING_CITY_NAME, MAPPING_CITY_NAME)
         stations_cache = os.path.join(REPO_ROOT, "cache", "stations",
-                                          f"{city_key}_stations.json")
+                                      f"{city_key}_stations.json")
         stations = get_official_nextbike_stations(
             api_names, cache_path=stations_cache,
             ttl_hours=STATIONS_CACHE_TTL_HOURS)
@@ -690,7 +673,7 @@ if __name__ == "__main__":
                 '["highway"]["area"!~"yes"]["access"!~"private"]'
                 '["highway"!~"motorway|motorway_link|trunk|trunk_link|steps"]'
                 '["surface"!~"dirt|sand|grass|mud"]'
-                )
+            )
             G_bike = ox.graph_from_point(
                 (first_lat, first_lon), dist=12000, custom_filter=urban_bike_filter)
             ox.save_graphml(G_bike, bike_graph_file)
@@ -719,11 +702,10 @@ if __name__ == "__main__":
             osm_file = CITY_OSM_FILE.get(MAPPING_CITY_NAME)
             if osm_file:
                 osm_path = os.path.join(OSM_DIR, osm_file)
+                print(f"\n--- PHASE 3: R5PY WALK NETWORK ---")
                 if os.path.exists(osm_path):
-                    print(f"\n--- PHASE 3: R5PY WALK NETWORK ---")
                     r5py_network = _build_r5py_walk_network(osm_path)
                 else:
-                    print(f"\n--- PHASE 3: R5PY WALK NETWORK ---")
                     print(f"  [!] OSM file not found: {osm_path}")
                     print(f"      Download from https://download.geofabrik.de/europe/czech-republic.html")
                     print(f"      Falling back to OSMnx walk method.")
@@ -783,45 +765,54 @@ if __name__ == "__main__":
         predicted_times_dict = dict(zip(node_features_df.index, floored_predictions))
 
         # ── PHASE 5: Pre-project walk edges (OSMnx fallback only) ─────────────
+        # Only needed when r5py is disabled or unavailable.
+        # This block does NOT contain Phase 6 — that always runs below.
         projected_walk_edges = None
         if not USE_R5PY_WALK or r5py_network is None:
             print(f"\n--- PHASE 5: PRE-PROJECTING WALK GRAPH ---")
             projected_walk_edges = _project_graph_edges(G_walk)
             print(f"  -> {len(projected_walk_edges)} walk edges ready.")
 
-            # ── PHASE 6: ISOCHRONES FOR {CITY} ────────────────────────────────────
-            # Create city-specific subdirectory
-            city_output_dir = os.path.join(OUTPUT_DIR, city_key)
-            os.makedirs(city_output_dir, exist_ok=True)
+        # ── PHASE 6: ISOCHRONES ───────────────────────────────────────────────
+        # FIX 1: Phase 6 is now correctly OUTSIDE the Phase 5 `if` block so it
+        # always runs regardless of whether r5py or OSMnx is used for walks.
+        #
+        # FIX 3: Output directory renamed to {city_key}_bike_isochrones.
+        city_output_dir = os.path.join(OUTPUT_DIR, f"{city_key}_bike_isochrones")
+        os.makedirs(city_output_dir, exist_ok=True)
 
-            print(f"\n--- PHASE 6: ISOCHRONES FOR {MAPPING_CITY_NAME.upper()} | {TIME_BUDGETS} MIN ---")
+        print(f"\n--- PHASE 6: ISOCHRONES FOR {MAPPING_CITY_NAME.upper()} | {TIME_BUDGETS} MIN ---")
+        print(f"     Output directory: {os.path.relpath(city_output_dir)}")
 
-            for ORIGIN_STATION_NAME in ORIGIN_STATION_NAMES:
-                ORIGIN_LAT, ORIGIN_LON = resolve_origin_from_station_name(stations, ORIGIN_STATION_NAME)
+        for ORIGIN_STATION_NAME in ORIGIN_STATION_NAMES:
+            ORIGIN_LAT, ORIGIN_LON = resolve_origin_from_station_name(
+                stations, ORIGIN_STATION_NAME)
 
-                for mins in TIME_BUDGETS:
-                    # 1. Own Bike Naming
-                    own_bike_filename = os.path.join(city_output_dir, f"isochrone_own_bike_{mins}min.geojson")
+            for mins in TIME_BUDGETS:
+                # 1. Own Bike
+                own_bike_filename = os.path.join(
+                    city_output_dir, f"isochrone_own_bike_{mins}min.geojson")
 
-                    poly_own = generate_own_bike_polygon(
-                        G_bike_undirected,
-                        predicted_times_dict,
-                        mins,
-                        own_bike_filename
+                poly_own = generate_own_bike_polygon(
+                    G_bike_undirected,
+                    predicted_times_dict,
+                    mins,
+                    own_bike_filename,
+                )
+
+                # 2. Shared Bike
+                if poly_own is not None:
+                    shared_bike_filename = os.path.join(
+                        city_output_dir, f"isochrone_shared_bike_{mins}min.geojson")
+
+                    generate_shared_bike_isochrone(
+                        G_bike_undirected, G_walk, poly_own,
+                        predicted_times_dict, stations,
+                        ORIGIN_LAT, ORIGIN_LON, mins,
+                        shared_bike_filename,
+                        projected_walk_edges=projected_walk_edges,
+                        r5py_network=r5py_network,
+                        depart_datetime=DEPART_DATETIME,
                     )
-
-                    # 2. Shared Bike Naming
-                    if poly_own is not None:
-                        shared_bike_filename = os.path.join(city_output_dir, f"isochrone_shared_bike_{mins}min.geojson")
-
-                        generate_shared_bike_isochrone(
-                            G_bike_undirected, G_walk, poly_own,
-                            predicted_times_dict, stations,
-                            ORIGIN_LAT, ORIGIN_LON, mins,
-                            shared_bike_filename,
-                            projected_walk_edges=projected_walk_edges,
-                            r5py_network=r5py_network,
-                            depart_datetime=DEPART_DATETIME,
-                        )
 
     print("\n*** ALL MAPS SUCCESSFULLY COMPLETED! ***")

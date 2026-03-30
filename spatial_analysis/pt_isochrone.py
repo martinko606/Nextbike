@@ -54,36 +54,36 @@ MAX_WALK_MINUTES     = 15     # maximum walking time for any single leg
 # origins     : Nextbike station names to use as origins
 CITY_CONFIG = {
 
-    #"Ostrava": {
-    #     "gtfs_file": "ostrava.zip",
-    #     "osm_file":  "czech-republic-260303.osm.pbf",  # same file
-    #     "api_names": "Ostrava",
-        # "origins": ["SV-Svinov nádraží *(navíc 15min na odjezd)"],
-     #},
+    "Ostrava": {
+         "gtfs_file": "ostrava.zip",
+         "osm_file":  "czech-republic-260303.osm.pbf",  # same file
+         "api_names": "Ostrava",
+         "origins": ["SV-Svinov nádraží *(navíc 15min na odjezd)"],
+     },
     "Ostrava_hlavni": {
         "gtfs_file": "ostrava.zip",
         "osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
         "api_names": "Ostrava",
         "origins": ["MOAP-Hlavní nádraží"],
      },
-    #"Brno": {
-     #"gtfs_file": "brno.zip",
-     #"osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
-     #"api_names": "Brno",
-     #"origins": ["Hlavní nádraží - Hlavní vstup"],
-     #},
-    # "Přerov": {
-    # "gtfs_file": "prerov.zip",
-    # "osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
-    # "api_names": "Přerov",
-    # "origins": ["Nádraží"],
-    # },
-    # "ValMez": {
-    # "gtfs_file": "XXXX.zip",
-    # "osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
-    # "api_names": ["Valašské Meziříčí", "Poličná", "Krhová", "Zašová"],
-    # "origins": ["Vlakové nádraží Valašské Meziříčí (nové umístění)"],
-    # },
+    "Brno": {
+     "gtfs_file": "brno.zip",
+     "osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
+     "api_names": "Brno",
+     "origins": ["Hlavní nádraží - Hlavní vstup"],
+     },
+    "Přerov": {
+     "gtfs_file": "prerov.zip",
+     "osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
+     "api_names": "Přerov",
+     "origins": ["Nádraží"],
+     },
+    "ValMez": {
+     "gtfs_file": "valmez.zip",
+     "osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
+     "api_names": ["Valašské Meziříčí", "Poličná", "Krhová", "Zašová"],
+     "origins": ["Vlakové nádraží Valašské Meziříčí (nové umístění)"],
+    },
 }
 
 
