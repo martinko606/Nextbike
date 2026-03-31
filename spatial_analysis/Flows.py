@@ -2,6 +2,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
 import os  # <--- Added to handle directories
+import geopandas as gpd
+from shapely.geometry import LineString
 
 # ==========================================
 # 1. SETUP & DATA
@@ -11,7 +13,10 @@ OUTPUT_DIR = os.path.join("../results", "maps")
 # Create directory if it doesn't exist
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-file_path = '/data/nextbike_data_VSB_Vaclavik.xlsx'
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
+
+file_path = os.path.join(REPO_ROOT, "data", "nextbike_data_VSB_Vaclavik.xlsx")
 
 # Station Names
 STATION_SVINOV = 'SV-Svinov nádraží *(navíc 15min na odjezd)'
@@ -406,28 +411,93 @@ def generate_standard_map_clustered_logic(dataframe, center_name, h_lat, h_lng, 
     fig.write_html(fname)
     print(f"Saved: {fname}")
 
+def export_flows_to_geojson(hub_name, folder_prefix):
+    """
+    Processes the flows just like your map generator,
+    but saves a GeoJSON file for QGIS.
+    """
+    print(f"--- Exporting GeoJSON for: {hub_name} ---")
+
+    # 1. Get the Hub coordinates
+    try:
+        # Note: In your script it might be 'start_lat' or col_lat_start
+        # Make sure these match your global variables
+        r = all_trips[all_trips['start_place'] == hub_name].iloc[0]
+        h_lat, h_lng = r[col_lat_start], r[col_lng_start]
+    except:
+        return
+
+    # 2. Filter trips
+    subset = all_trips[(all_trips['start_place'] == hub_name) | (all_trips['end_place'] == hub_name)].copy()
+    subset['partner'] = subset.apply(lambda x: x['end_place'] if x['start_place'] == hub_name else x['start_place'],
+                                     axis=1)
+
+    flow_records = []
+    for p in subset['partner'].unique():
+        if p == hub_name: continue
+        try:
+            pr = all_trips[all_trips['start_place'] == p].iloc[0]
+            p_lat, p_lng = pr[col_lat_start], pr[col_lng_start]
+        except:
+            continue
+
+        out_c = len(subset[(subset['start_place'] == hub_name) & (subset['end_place'] == p)])
+        in_c = len(subset[(subset['start_place'] == p) & (subset['end_place'] == hub_name)])
+
+        if out_c > 0 or in_c > 0:
+            line = LineString([(h_lng, h_lat), (p_lng, p_lat)])
+            flow_records.append({
+                'hub': hub_name,
+                'partner': p,
+                'out_count': out_c,
+                'in_count': in_c,
+                'total_flow': out_c + in_c,
+                'geometry': line
+            })
+
+    if flow_records:
+        gdf = gpd.GeoDataFrame(flow_records, crs="EPSG:4326")
+        output_file = os.path.join(OUTPUT_DIR, f"{folder_prefix}_flows.geojson")
+        gdf.to_file(output_file, driver='GeoJSON')
+        print(f"Successfully exported for QGIS: {output_file}")
+
 
 # ==========================================
-# 7. EXECUTION
+# 7. EXECUTION (Touch the LEFT MARGIN)
 # ==========================================
 
 print(f"--- Outputting maps to: {OUTPUT_DIR} ---")
 
-# 1. Brno: 3 Separate Maps (Individual Stations)
+# 1. Brno: 3 Separate Maps
 for station in BRNO_STATIONS:
     safe_name = "Brno_" + station.replace(" ", "_").replace("-", "_")
     generate_standard_map(station, safe_name)
+    export_flows_to_geojson(station, safe_name)
 
-# 2. Brno: 1 Map with All 3 Stations (Separate Nodes)
+# 2. Brno: Combined
 generate_brno_combined_separate_nodes()
 
-# 3. Brno: 1 Clustered Map (Merged Data)
+# 3. Brno: Clustered
 generate_brno_clustered()
+# Manual export for the Master Hub (using average coordinates)
+r_brno = all_trips[all_trips['start_place'].isin(BRNO_STATIONS)]
+if not r_brno.empty:
+    c_lat, c_lng = r_brno[col_lat_start].mean(), r_brno[col_lng_start].mean()
+    # To use the cluster logic, you can temporarily rename the hubs in a copy
+    # But for now, let's just make sure the basic exports work.
+    pass
 
-# 4. Other Cities (Standard Maps)
+# 4. Other Cities
 generate_standard_map(STATION_SVINOV, "Ostrava_Svinov")
-generate_standard_map(STATION_MOAP, "Ostrava_MOAP")
-generate_standard_map(STATION_VALMEZ, "Valasske_Mezirici")
-generate_standard_map(STATION_PREROV, "Prerov")
+export_flows_to_geojson(STATION_SVINOV, "Ostrava_Svinov")
 
-print(f"\nAll maps generated successfully in {OUTPUT_DIR}!")
+generate_standard_map(STATION_MOAP, "Ostrava_MOAP")
+export_flows_to_geojson(STATION_MOAP, "Ostrava_MOAP")
+
+generate_standard_map(STATION_VALMEZ, "Valasske_Mezirici")
+export_flows_to_geojson(STATION_VALMEZ, "Valasske_Mezirici")
+
+generate_standard_map(STATION_PREROV, "Prerov")
+export_flows_to_geojson(STATION_PREROV, "Prerov")
+
+print(f"\nAll maps and GeoJSONs generated successfully!")

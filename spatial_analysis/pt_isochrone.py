@@ -38,7 +38,7 @@ DEPARTURE_DATETIME = datetime.datetime(2026, 2, 26, 8, 0)   # date + time of dep
 # How many minutes around the departure time R5 samples to account for
 # timetable uncertainty (e.g. 10 = samples departures 08:00–08:10 every minute,
 # returns median travel time). Increase for more robust results, decrease for speed.
-TIME_WINDOW_MINUTES = 20
+TIME_WINDOW_MINUTES = 30
 
 TIME_BUDGETS = [15, 30]   # minutes — total budget including transit + walking
 
@@ -54,30 +54,30 @@ MAX_WALK_MINUTES     = 15     # maximum walking time for any single leg
 # origins     : Nextbike station names to use as origins
 CITY_CONFIG = {
 
-    "Ostrava": {
-         "gtfs_file": "ostrava.zip",
-         "osm_file":  "czech-republic-260303.osm.pbf",  # same file
-         "api_names": "Ostrava",
-         "origins": ["SV-Svinov nádraží *(navíc 15min na odjezd)"],
-     },
-    "Ostrava_hlavni": {
-        "gtfs_file": "ostrava.zip",
-        "osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
-        "api_names": "Ostrava",
-        "origins": ["MOAP-Hlavní nádraží"],
-     },
-    "Brno": {
-     "gtfs_file": "brno.zip",
-     "osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
-     "api_names": "Brno",
-     "origins": ["Hlavní nádraží - Hlavní vstup"],
-     },
-    "Přerov": {
-     "gtfs_file": "prerov.zip",
-     "osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
-     "api_names": "Přerov",
-     "origins": ["Nádraží"],
-     },
+    #"Ostrava": {
+         #"gtfs_file": "ostrava.zip",
+         #"osm_file":  "czech-republic-260303.osm.pbf",  # same file
+         #"api_names": "Ostrava",
+         #"origins": ["SV-Svinov nádraží *(navíc 15min na odjezd)"],
+     #},
+    #"Ostrava_hlavni": {
+        #"gtfs_file": "ostrava.zip",
+        #"osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
+        #"api_names": "Ostrava",
+        #"origins": ["MOAP-Hlavní nádraží"],
+     #},
+    #"Brno": {
+     #"gtfs_file": "brno.zip",
+     #"osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
+     #"api_names": "Brno",
+     #"origins": ["Hlavní nádraží - Hlavní vstup"],
+     #},
+    #"Přerov": {
+     #"gtfs_file": "prerov.zip",
+     #"osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
+     #"api_names": "Přerov",
+     #"origins": ["Nádraží"],
+     #},
     "ValMez": {
      "gtfs_file": "valmez.zip",
      "osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
