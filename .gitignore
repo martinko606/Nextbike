@@ -10,5 +10,8 @@ Analysis_Results/
 data/osm/
 
 
+data/nextbike_data_VSB_Vaclavik.xlsx
+data/nextbike_data_VSB_Vaclavik2.xlsx
+
 # Ignore all generated map results
 results/
