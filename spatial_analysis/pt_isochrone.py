@@ -1,4 +1,5 @@
 import sys, os
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import datetime
@@ -6,12 +7,14 @@ import warnings
 import requests
 import re
 import geopandas as gpd
+from shapely.geometry import Polygon, MultiPolygon, LineString, MultiLineString
+from shapely.ops import polygonize, unary_union
 
 warnings.filterwarnings("ignore")
 
 # ==============================================================================
 # DEPENDENCIES CHECK
-#r5py requires:
+# r5py requires:
 #   pip install r5py
 #   Java JDK 11+ must be installed and on PATH
 #
@@ -26,61 +29,57 @@ warnings.filterwarnings("ignore")
 # CONFIGURATION — edit only this section
 # ==============================================================================
 
-REPO_ROOT  = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-GTFS_DIR   = os.path.join(REPO_ROOT, "data", "gtfs")
-OSM_DIR    = os.path.join(REPO_ROOT, "data", "osm")
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+GTFS_DIR = os.path.join(REPO_ROOT, "data", "gtfs")
+OSM_DIR = os.path.join(REPO_ROOT, "data", "osm")
 OUTPUT_DIR = os.path.join(REPO_ROOT, "results", "spatial_analysis")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ── Departure configuration ───────────────────────────────────────────────────
-DEPARTURE_DATETIME = datetime.datetime(2026, 2, 26, 8, 0)   # date + time of departure
+# Must fall within the GTFS validity period (e.g. late August working Tuesday)
+DEPARTURE_DATETIME = datetime.datetime(2026, 2, 25, 8, 0)
 
 # How many minutes around the departure time R5 samples to account for
 # timetable uncertainty (e.g. 10 = samples departures 08:00–08:10 every minute,
 # returns median travel time). Increase for more robust results, decrease for speed.
 TIME_WINDOW_MINUTES = 20
 
-TIME_BUDGETS = [15, 30]   # minutes — total budget including transit + walking
+TIME_BUDGETS = [15, 30]  # minutes — total budget including transit + walking
 
 # ── Walking parameters ────────────────────────────────────────────────────────
-WALK_SPEED_KMH       = 5.0    # km/h — used for access, egress and transfers
-MAX_WALK_MINUTES     = 15     # maximum walking time for any single leg
-                               # (access to first stop, transfers, egress from last stop)
+WALK_SPEED_KMH = 5.0  # km/h — used for access, egress and transfers
+MAX_WALK_MINUTES = 15  # maximum walking time for any single leg
 
 # ── City configuration ────────────────────────────────────────────────────────
-# gtfs_file   : filename in data/gtfs/
-# osm_file    : filename in data/osm/
-# api_names   : Nextbike API city name(s) — must match API exactly (with diacritics)
-# origins     : Nextbike station names to use as origins
 CITY_CONFIG = {
-
-    #"Ostrava": {
-    #     "gtfs_file": "ostrava.zip",
-    #     "osm_file":  "czech-republic-260303.osm.pbf",  # same file
-    #     "api_names": "Ostrava",
-        # "origins": ["SV-Svinov nádraží *(navíc 15min na odjezd)"],
-     #},
+    "Ostrava": {
+        "gtfs_file": "ostrava.zip",
+        "osm_file": "czech-republic-260303.osm.pbf",
+        "api_names": "Ostrava",
+        "origins": ["SV-Svinov nádraží *(navíc 15min na odjezd)"],
+    },
     "Ostrava_hlavni": {
         "gtfs_file": "ostrava.zip",
-        "osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
+        "osm_file": "czech-republic-260303.osm.pbf",
         "api_names": "Ostrava",
         "origins": ["MOAP-Hlavní nádraží"],
-     },
+    },
     #"Brno": {
-     #"gtfs_file": "brno.zip",
-     #"osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
-     #"api_names": "Brno",
-     #"origins": ["Hlavní nádraží - Hlavní vstup"],
-     #},
+    #    "gtfs_file": "brno.zip",
+    #    "osm_file": "czech-republic-260303.osm.pbf",
+    #    "api_names": "Brno",
+    #    "origins": ["Hlavní nádraží - Hlavní vstup"],
+    #},
+    # Commented out due to corrupted GTFS file (missing coordinates/keys)
     # "Přerov": {
     # "gtfs_file": "prerov.zip",
-    # "osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
+    # "osm_file": "czech-republic-260303.osm.pbf",
     # "api_names": "Přerov",
     # "origins": ["Nádraží"],
     # },
     # "ValMez": {
     # "gtfs_file": "XXXX.zip",
-    # "osm_file": "czech-republic-260303.osm.pbf",  # same file for all cities
+    # "osm_file": "czech-republic-260303.osm.pbf",
     # "api_names": ["Valašské Meziříčí", "Poličná", "Krhová", "Zašová"],
     # "origins": ["Vlakové nádraží Valašské Meziříčí (nové umístění)"],
     # },
@@ -89,7 +88,6 @@ CITY_CONFIG = {
 
 # ==============================================================================
 # NEXTBIKE ORIGIN RESOLVER
-# (identical pattern to bike_isochrone.py — resolves station name -> lat/lon)
 # ==============================================================================
 
 def resolve_nextbike_origin(city_api_names, station_name):
@@ -108,8 +106,8 @@ def resolve_nextbike_origin(city_api_names, station_name):
                         if p.get("spot"):
                             stations.append({
                                 "name": p["name"],
-                                "lat":  float(p["lat"]),
-                                "lon":  float(p["lng"]),
+                                "lat": float(p["lat"]),
+                                "lon": float(p["lng"]),
                             })
     except Exception as e:
         raise RuntimeError(f"Nextbike API error: {e}")
@@ -129,6 +127,37 @@ def resolve_nextbike_origin(city_api_names, station_name):
     raise ValueError(f"Station '{station_name}' not found among {len(stations)} Nextbike stops.")
 
 
+def ensure_solid_polygon(geom):
+    """
+    Converts r5py LineStrings into a solid Polygon by applying a tiny buffer
+    to connect the street network, unioning it, and then extracting
+    only the exterior boundary to remove all internal holes.
+    """
+    if geom is None or geom.is_empty:
+        return geom
+
+    # Step 1: If it is lines (streets), buffer them slightly to make them overlap
+    # into a continuous shape (50 meters usually covers city blocks).
+    if geom.geom_type in ['LineString', 'MultiLineString']:
+        # Project to metric CRS for accurate buffering in meters
+        gdf = gpd.GeoDataFrame({'geometry': [geom]}, crs="EPSG:4326")
+        gdf_metric = gdf.to_crs(epsg=32633)
+        buffered_metric = gdf_metric.geometry.buffer(50).unary_union
+
+        # Bring it back to WGS84
+        geom = gpd.GeoSeries([buffered_metric], crs="EPSG:32633").to_crs(epsg=4326).iloc[0]
+
+    # Step 2: Now that it is a polygon (or if it already was), remove all internal holes
+    if geom.geom_type == 'Polygon':
+        return Polygon(geom.exterior)
+    elif geom.geom_type == 'MultiPolygon':
+        # Drop tiny isolated artifacts and fill holes of the main blobs
+        filled_parts = [Polygon(p.exterior) for p in geom.geoms if p.area > 0.00001]
+        return MultiPolygon(filled_parts) if len(filled_parts) > 1 else (filled_parts[0] if filled_parts else geom)
+
+    return geom
+
+
 # ==============================================================================
 # MAIN
 # ==============================================================================
@@ -145,13 +174,13 @@ if __name__ == "__main__":
         )
 
     for city_name, cfg in CITY_CONFIG.items():
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"  PROCESSING: {city_name.upper()}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         # ── File checks ───────────────────────────────────────────────────────
         gtfs_path = os.path.join(GTFS_DIR, cfg["gtfs_file"])
-        osm_path  = os.path.join(OSM_DIR,  cfg["osm_file"])
+        osm_path = os.path.join(OSM_DIR, cfg["osm_file"])
 
         missing = []
         if not os.path.exists(gtfs_path):
@@ -185,9 +214,6 @@ if __name__ == "__main__":
             continue
 
         # ── PHASE 2: Build transport network (once per city) ─────────────────
-        # R5 combines the OSM street network with GTFS timetables into a single
-        # routable network. This takes 1–3 minutes on first run; r5py caches the
-        # result as a .dat file next to the osm.pbf so subsequent runs are instant.
         print(f"\n--- PHASE 2: BUILDING TRANSPORT NETWORK ---")
         print(f"  -> OSM:  {cfg['osm_file']}")
         print(f"  -> GTFS: {cfg['gtfs_file']}")
@@ -200,7 +226,6 @@ if __name__ == "__main__":
         )
 
         # ── PHASE 3: Isochrones per origin per time budget ───────────────────
-        # Create city-specific subdirectory (e.g., results/spatial_analysis/ostrava/)
         city_output_dir = os.path.join(OUTPUT_DIR, city_key)
         os.makedirs(city_output_dir, exist_ok=True)
 
@@ -237,9 +262,13 @@ if __name__ == "__main__":
                 layer["travel_time_min"] = mins
                 layer = layer.drop(columns=["travel_time"])
 
+                # --- NEW: Convert Lines to Solid Polygons ---
+                layer["geometry"] = layer["geometry"].apply(ensure_solid_polygon)
+                # ------------------------------------------------
+
                 # Standardized filename: isochrone_pt_15min.geojson
                 out_file = os.path.join(city_output_dir, f"isochrone_pt_{mins}min.geojson")
                 layer.to_file(out_file, driver="GeoJSON")
-                print(f"     Saved PT Isochrone: {os.path.relpath(out_file)}")
+                print(f"     Saved PT Isochrone (Solid): {os.path.relpath(out_file)}")
 
     print("\n*** ALL PT ISOCHRONES COMPLETED! ***")
