@@ -5,22 +5,6 @@
   Purpose : Thesis results — geometric synergy, model validation, demand-coverage
   CRS     : EPSG:4326 for I/O  |  EPSG:32633 (UTM 33N) for metric calculations
 ================================================================================
-
-Expected file-tree (Post-QGIS Batch Process)
-------------------
-results/spatial_analysis/
-├── brno/
-│   ├── brno_isochrone_own_bike_15min_filled.geojson
-│   ├── brno_isochrone_shared_bike_15min_filled.geojson
-│   ├── brno_isochrone_pt_15min_filled.geojson
-│   └── ... (30min variants)
-└── ostrava/
-    ├── svinov_isochrone_own_bike_15min_filled.geojson
-    ├── svinov_isochrone_shared_bike_15min_filled.geojson
-    ├── svinov_isochrone_pt_15min_filled.geojson
-    └── ... (30min variants)
-
-nextbike_data_VSB_Vaclavik.xlsx   ← historical trip data (any reachable path)
 """
 
 # ── standard library ─────────────────────────────────────────────────────────
@@ -42,18 +26,26 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 # 0.  CONFIGURATION  — adjust these before running
 # ═════════════════════════════════════════════════════════════════════════════
 
+# ── Dynamic Project Root Resolution ──────────────────────────────────────────
+# This prevents PyCharm "Working Directory" errors by forcing absolute paths.
+# It walks up the folder tree until it finds the 'data' directory.
+_current_dir = Path(__file__).resolve().parent
+while _current_dir.name and not (_current_dir / "data").exists():
+    _current_dir = _current_dir.parent
+PROJECT_ROOT = _current_dir
+
 # ── cities to process ────────────────────────────────────────────────────────
 CITIES = ["brno", "ostrava_svinov", "ostrava_hlavni", "prerov", "valmez"]
 
 # ── root of the GeoJSON isochrone tree ───────────────────────────────────────
-ISOCHRONE_ROOT = Path("results/spatial_analysis")
+ISOCHRONE_ROOT = PROJECT_ROOT / "data" / "analysis data"
 
 # ── Excel trip data ──────────────────────────────────────────────────────────
-EXCEL_PATH = Path("nextbike_data_VSB_Vaclavik.xlsx")
+EXCEL_PATH = PROJECT_ROOT / "nextbike_data_VSB_Vaclavik.xlsx"
 
 # ── Population Grid Data (NEW) ───────────────────────────────────────────────
-POPULATION_GRID_PATH = Path("data/population_grid.geojson") # Update to your grid path
-POP_COLUMN = "population" # Change to match the column name in your shapefile (e.g., 'TOT_P')
+POPULATION_GRID_PATH = PROJECT_ROOT / "data" / "analysis data" / "grid_obyvatelstvo_sldb2021_20210326.gpkg"
+POP_COLUMN = "g131620000" # CZSO SLDB 2021 code for Total Population (Obyvatelstvo celkem)
 
 # ── Study-origin coordinates (WGS-84) ────────────────────────────────────────
 STUDY_ORIGINS = {
@@ -68,7 +60,7 @@ STUDY_ORIGINS = {
 FILE_PREFIXES = {
     "brno":           "brno",
     "ostrava_svinov": "svinov",
-    "ostrava_hlavni": "ostrava_hlavni",
+    "ostrava_hlavni": "ov_hl",
     "prerov":         "prerov",
     "valmez":         "valmez"
 }
@@ -80,7 +72,7 @@ CRS_WGS84  = "EPSG:4326"
 CRS_METRIC = "EPSG:32633"   # UTM zone 33N — valid across Czech Republic
 
 # ── Output paths ─────────────────────────────────────────────────────────────
-OUTPUT_DIR    = Path("results/spatial_analysis")
+OUTPUT_DIR    = PROJECT_ROOT / "results" / "spatial_analysis"
 REPORT_CSV    = OUTPUT_DIR / "Validation_Report.csv"
 SYNERGY_GJSON = OUTPUT_DIR / "synergy_analysis.geojson"
 
@@ -115,6 +107,30 @@ def load_isochrone(city: str, mode: str, minutes: int) -> gpd.GeoDataFrame | Non
     print(f"  [OK]   Loaded {filename}  ({len(gdf)} feature(s))")
     return gdf
 
+def load_stations(city: str, minutes: int) -> gpd.GeoDataFrame | None:
+    """
+    Load the explicitly provided station GeoJSON files for accurate infrastructure counts.
+    """
+    prefix = FILE_PREFIXES.get(city, city)
+    filename = f"{prefix}_stations_shared_bike_{minutes}min.geojson"
+
+    path_city = ISOCHRONE_ROOT / city / filename
+    path_root = ISOCHRONE_ROOT / filename
+
+    target_path = path_city if path_city.exists() else path_root
+
+    if not target_path.exists():
+        print(f"  [WARN] Missing explicit station file: {filename}")
+        return None
+
+    gdf = gpd.read_file(target_path)
+    if gdf.crs is None:
+        gdf = gdf.set_crs(CRS_WGS84)
+    else:
+        gdf = gdf.to_crs(CRS_WGS84)
+
+    print(f"  [OK]   Loaded {filename}  ({len(gdf)} stations)")
+    return gdf
 
 def to_metric(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     return gdf.to_crs(CRS_METRIC)
@@ -158,7 +174,7 @@ def calculate_population_covered(poly_m_gdf: gpd.GeoDataFrame, grid_m_gdf: gpd.G
 # 2.  TASK A — GEOMETRIC SYNERGY & INTERSECTIONS
 # ═════════════════════════════════════════════════════════════════════════════
 
-def analyse_geometric_synergy(city: str, minutes: int = 15, pop_grid_m: gpd.GeoDataFrame = None) -> dict:
+def analyse_geometric_synergy(city: str, minutes: int = 15, pop_grid_m: gpd.GeoDataFrame = None, stations_gdf: gpd.GeoDataFrame = None) -> dict:
     """
     Compute areas of all polygons, intersections, SMI, Transit Gap,
     and demographically covered populations.
@@ -225,10 +241,21 @@ def analyse_geometric_synergy(city: str, minutes: int = 15, pop_grid_m: gpd.GeoD
         if ob_m is not None:
             pop_ob = calculate_population_covered(ob_m, pop_grid_m, POP_COLUMN)
 
+    # ── Station Supply Analysis ───────────────────────────────────────────────
+    stations_covered = 0
+    if stations_gdf is not None and not stations_gdf.empty:
+        # Reproject stations to metric to match the shared bike polygon
+        stations_m = stations_gdf.to_crs(CRS_METRIC)
+        sb_union_gdf = dissolve_to_single(sb_m)
+        # Spatial join to count stations sitting inside the polygon.
+        # Using "intersects" ensures points sitting exactly on the border are counted.
+        joined_stations = gpd.sjoin(stations_m, sb_union_gdf, how="inner", predicate="intersects")
+        stations_covered = len(joined_stations)
+
     # ── report ────────────────────────────────────────────────────────────────
     print(f"  [Areas & Populations]")
     print(f"  Baseline ({baseline_mode})     : {area_base:.3f} km²  | {int(pop_base):,} people")
-    print(f"  Shared Bike ({minutes} min)    : {area_sb:.3f} km²  | {int(pop_sb):,} people")
+    print(f"  Shared Bike ({minutes} min)    : {area_sb:.3f} km²  | {int(pop_sb):,} people  | {stations_covered} stations")
     print(f"  Own Bike ({minutes} min)       : {area_ob:.3f} km²  | {int(pop_ob):,} people")
     print(f"  \n  [Intersections]")
     print(f"  Baseline ∩ Shared Bike     : {area_overlap_base_sb:.3f} km²")
@@ -256,6 +283,7 @@ def analyse_geometric_synergy(city: str, minutes: int = 15, pop_grid_m: gpd.GeoD
         "pop_own_bike":           int(pop_ob),
         "pop_union":              int(pop_union),
         "pop_transit_gap":        int(pop_gap),
+        "stations_in_shared_bike":int(stations_covered),
         "SMI":                    round(smi, 4),
         "_gap_gdf":               gap_gdf.to_crs(CRS_WGS84),
         "_union_gdf":             union_gdf.to_crs(CRS_WGS84),
@@ -348,24 +376,26 @@ def validate_model(city: str, trips_df: pd.DataFrame) -> list[dict]:
             results.append(res)
     return results
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # 4.  TASK C — DEMAND vs. COVERAGE
 # ═════════════════════════════════════════════════════════════════════════════
 
 def compute_station_flow(trips_df: pd.DataFrame, lat_col: str = "start_lat", lon_col: str = "start_lng") -> gpd.GeoDataFrame:
+    """
+    Aggregate trip starts by exact coordinate pair to determine flow.
+    """
     if trips_df.empty:
         return gpd.GeoDataFrame()
 
-    trips_df = trips_df.copy()
-    trips_df["_lat_r"] = trips_df[lat_col].round(4)
-    trips_df["_lon_r"] = trips_df[lon_col].round(4)
+    # Group by exact coordinates without any rounding/clustering
+    flow = trips_df.groupby([lat_col, lon_col]).size().reset_index(name="flow_count")
+    geom = [Point(lon, lat) for lon, lat in zip(flow[lon_col], flow[lat_col])]
 
-    flow = trips_df.groupby(["_lat_r", "_lon_r"]).size().reset_index(name="flow_count")
-    geom = [Point(lon, lat) for lon, lat in zip(flow["_lon_r"], flow["_lat_r"])]
-    flow_gdf = gpd.GeoDataFrame(flow, geometry=geom, crs=CRS_WGS84).rename(columns={"_lat_r": "station_lat", "_lon_r": "station_lon"})
+    flow_gdf = gpd.GeoDataFrame(flow, geometry=geom, crs=CRS_WGS84).rename(
+        columns={lat_col: "station_lat", lon_col: "station_lon"}
+    )
 
-    print(f"  Aggregated {len(trips_df)} trips → {len(flow_gdf)} unique station(s).")
+    print(f"  Aggregated {len(trips_df)} trips → {len(flow_gdf)} exact unique station(s).")
     return flow_gdf
 
 
@@ -413,7 +443,6 @@ def demand_coverage_summary(stations_gdf: gpd.GeoDataFrame, city: str, minutes: 
     print(f"  LOW reach  / HIGH flow stations : {df['low_reach_high_flow'].sum()}")
     return df.drop(columns=["high_reach_low_flow", "low_reach_high_flow"])
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # 5.  SYNERGY GEOJSON EXPORT
 # ═════════════════════════════════════════════════════════════════════════════
@@ -431,11 +460,11 @@ def build_synergy_geojson(synergy_results: list[dict]) -> gpd.GeoDataFrame:
                 "geometry":          union_gdf.geometry.iloc[0],
                 "city":              r["city"],
                 "minutes":           r["minutes"],
-                "layer_type":        "union_PT_SharedBike",
+                "layer_type":        f"union_{r['baseline_mode']}_SharedBike",
                 "area_km2":          r["area_union_km2"],
-                "area_pt_km2":       r["area_pt_km2"],
+                "area_baseline_km2": r["area_baseline_km2"],
                 "area_bike_km2":     r["area_shared_bike_km2"],
-                "overlap_pt_bike_km2": r["overlap_pt_shared_km2"],
+                "overlap_base_bike_km2": r["overlap_base_shared_km2"],
                 "area_gap_km2":      r["area_transit_gap_km2"],
                 "SMI":               r["SMI"],
             })
@@ -449,15 +478,14 @@ def build_synergy_geojson(synergy_results: list[dict]) -> gpd.GeoDataFrame:
                 "minutes":      r["minutes"],
                 "layer_type":   "transit_gap",
                 "area_km2":     r["area_transit_gap_km2"],
-                "area_pt_km2":  r["area_pt_km2"],
+                "area_baseline_km2": r["area_baseline_km2"],
                 "area_bike_km2":r["area_shared_bike_km2"],
-                "overlap_pt_bike_km2": r["overlap_pt_shared_km2"],
+                "overlap_base_bike_km2": r["overlap_base_shared_km2"],
                 "area_gap_km2": r["area_transit_gap_km2"],
                 "SMI":          r["SMI"],
             })
 
     return gpd.GeoDataFrame(rows, crs=CRS_WGS84) if rows else gpd.GeoDataFrame()
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 6.  MAIN ORCHESTRATOR
@@ -494,9 +522,26 @@ def main():
         print(f"  CITY: {city.upper()}")
         print(f"{'═'*65}")
 
+        # ── Pre-compute empirical stations for Task C Demand ──────────────────
+        # Fixes the string mismatch (Excel says "Ostrava", but city key is "ostrava_svinov")
+        if "city" in trips_df.columns:
+            if "ostrava" in city:
+                city_trips = trips_df[trips_df["city"].str.lower() == "ostrava"]
+            elif city == "valmez":
+                city_trips = trips_df[trips_df["city"].str.lower().str.contains("val", na=False)]
+            else:
+                city_trips = trips_df[trips_df["city"].str.lower() == city]
+        else:
+            city_trips = trips_df
+
+        empirical_stations_gdf = compute_station_flow(city_trips)
+
         # ── Task A: Areas, Intersections & Demographics ───────────────────────
         for minutes in [15, 30]:
-            res = analyse_geometric_synergy(city, minutes, pop_grid_m)
+            # Explicitly load the station files you added for the raw dock count
+            dock_stations_gdf = load_stations(city, minutes)
+
+            res = analyse_geometric_synergy(city, minutes, pop_grid_m, dock_stations_gdf)
             if res:
                 scalar_res = {k: v for k, v in res.items() if not k.startswith("_")}
                 all_synergy_results.append(scalar_res)
@@ -514,14 +559,12 @@ def main():
         print(f"  [Task C] Demand vs Coverage — {city.upper()}")
         print(f"{'─'*60}")
 
-        city_trips = trips_df[trips_df["city"].str.lower() == city] if "city" in trips_df.columns else trips_df
-        stations_gdf = compute_station_flow(city_trips)
-
         for minutes in [15, 30]:
             iso_shared = load_isochrone(city, "shared_bike", minutes)
-            if iso_shared is not None and not stations_gdf.empty:
-                stations_gdf = attach_isochrone_reach(stations_gdf, iso_shared, minutes)
-                summary = demand_coverage_summary(stations_gdf, city, minutes=minutes)
+            if iso_shared is not None and not empirical_stations_gdf.empty:
+                # Use empirical_stations_gdf here so we keep the flow_count data for Task C
+                stations_with_reach = attach_isochrone_reach(empirical_stations_gdf, iso_shared, minutes)
+                summary = demand_coverage_summary(stations_with_reach, city, minutes=minutes)
                 if not summary.empty:
                     all_demand_rows.append(summary)
 
@@ -565,7 +608,7 @@ def main():
     print(f"{'═'*65}")
     if all_synergy_results:
         df = pd.DataFrame(all_synergy_results)
-        cols = ["city", "minutes", "baseline_mode", "area_baseline_km2", "area_shared_bike_km2", "area_transit_gap_km2", "SMI", "pop_transit_gap"]
+        cols = ["city", "minutes", "baseline_mode", "area_baseline_km2", "area_shared_bike_km2", "area_transit_gap_km2", "SMI", "pop_transit_gap", "stations_in_shared_bike"]
         print(df[cols].to_string(index=False))
 
     print(f"\n{'═'*65}")

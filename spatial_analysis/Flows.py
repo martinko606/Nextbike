@@ -63,20 +63,7 @@ def calculate_distance_km(lat1, lon1, lat2, lon2):
     return R * c
 
 
-def get_offset_geo(lat1, lon1, lat2, lon2, offset_meters=30):
-    d_lat = 1 / 111111
-    d_lon = 1 / (111111 * np.cos(np.radians((lat1 + lat2) / 2)))
-    dx = (lon2 - lon1) / d_lon
-    dy = (lat2 - lat1) / d_lat
-    dist = np.sqrt(dx ** 2 + dy ** 2)
-    if dist == 0: return (lat1, lon1), (lat2, lon2)
-    px, py = -dy / dist, dx / dist
-    s_lat = lat1 + py * offset_meters * d_lat
-    s_lon = lon1 + px * offset_meters * d_lon
-    e_lat = lat2 + py * offset_meters * d_lat
-    e_lon = lon2 + px * offset_meters * d_lat
-    return (s_lat, s_lon), (e_lat, e_lon)
-
+# NOTE: get_offset_geo has been removed to ensure exact station point coordinate usage.
 
 def get_arrow_head(lat1, lon1, lat2, lon2, size_scale=0.00015):
     mx = lon1 + (lon2 - lon1) * 0.55
@@ -88,14 +75,21 @@ def get_arrow_head(lat1, lon1, lat2, lon2, size_scale=0.00015):
     w2x, w2y = mx + np.cos(a2) * size_scale * 1.5, my + np.sin(a2) * size_scale
     return [w1y, my, w2y], [w1x, mx, w2x]
 
+
 # ==========================================
 # 3. HELPER: DRAWING FUNCTION (Reusable)
 # ==========================================
-def add_traces_to_fig(fig, hub_name, partner_data, h_lat, h_lng, traces_list, geojson_features, top_k=None):
-    """Calculates lines and arrows for a specific hub-partner pair"""
-    counts = partner_data['partner'].value_counts()
-    valid_partners = counts.head(top_k).index.tolist() if top_k else counts.index.tolist()
-    max_trips = counts.max() if not counts.empty else 1
+def add_traces_to_fig(fig, hub_name, partner_data, h_lat, h_lng, traces_list, geojson_features, top_k=None,
+                      global_valid_partners=None, global_max_trips=None):
+    """Calculates lines and arrows for a specific hub-partner pair using exact coordinates"""
+
+    if global_valid_partners is None:
+        counts = partner_data['partner'].value_counts()
+        valid_partners = counts.head(top_k).index.tolist() if top_k else counts.index.tolist()
+        max_trips = counts.max() if not counts.empty else 1
+    else:
+        valid_partners = global_valid_partners
+        max_trips = global_max_trips
 
     for p in partner_data['partner'].unique():
         if p == hub_name: continue
@@ -118,47 +112,57 @@ def add_traces_to_fig(fig, hub_name, partner_data, h_lat, h_lng, traces_list, ge
         out_c = len(partner_data[(partner_data['start_place'] == hub_name) & (partner_data['end_place'] == p)])
         in_c = len(partner_data[(partner_data['start_place'] == p) & (partner_data['end_place'] == hub_name)])
 
-        if out_c > 0:
-            width_out = max(1.5, (out_c / max_trips) * 12)
-            arrow_size = 0.0001 + (width_out * 0.000015)
-            (sl, slo), (el, elo) = get_offset_geo(h_lat, h_lng, p_lat, p_lng, 25)
-            traces_list.append(go.Scattermap(
-                mode="lines", lat=[sl, el], lon=[slo, elo],
-                line=dict(width=width_out, color='#00BFFF'), opacity=0.8,
-                hoverinfo='text', text=f"OUT: {out_c} -> {p}", showlegend=False
-            ))
-            ay, ax = get_arrow_head(sl, slo, el, elo, size_scale=arrow_size)
-            traces_list.append(
-                go.Scattermap(mode="lines", lat=ay, lon=ax, line=dict(width=width_out, color='#00BFFF'),
-                              hoverinfo='skip',
-                              showlegend=False))
-            # Record GeoJSON feature
-            geojson_features.append({
-                "origin": hub_name, "destination": p, "direction": "OUT", "trip_count": out_c,
-                "rank": rank, "line_thickness": round(width_out, 2),
-                "geometry": LineString([(slo, sl), (elo, el)])
-            })
+        # Exact Coordinates Override
+        sl, slo = h_lat, h_lng
+        el, elo = p_lat, p_lng
 
-        if in_c > 0:
-            width_in = max(1.5, (in_c / max_trips) * 12)
-            arrow_size = 0.0001 + (width_in * 0.000015)
-            (sl, slo), (el, elo) = get_offset_geo(p_lat, p_lng, h_lat, h_lng, 25)
+        total_c = out_c + in_c
+
+        if total_c > 0:
+            width = max(1.5, (total_c / max_trips) * 12)
+            arrow_size = 0.0001 + (width * 0.000015)
+
+            # Base combined line
             traces_list.append(go.Scattermap(
                 mode="lines", lat=[sl, el], lon=[slo, elo],
-                line=dict(width=width_in, color='#FF1493'), opacity=0.8,
-                hoverinfo='text', text=f"IN: {in_c} <- {p}", showlegend=False
+                line=dict(width=width, color='#AA00FF'), opacity=0.8,
+                hoverinfo='text', text=f"TOTAL: {total_c} | OUT: {out_c} | IN: {in_c}", showlegend=False
             ))
-            ay, ax = get_arrow_head(sl, slo, el, elo, size_scale=arrow_size)
-            traces_list.append(
-                go.Scattermap(mode="lines", lat=ay, lon=ax, line=dict(width=width_in, color='#FF1493'),
-                              hoverinfo='skip',
-                              showlegend=False))
-            # Record GeoJSON feature
-            geojson_features.append({
-                "origin": p, "destination": hub_name, "direction": "IN", "trip_count": in_c,
-                "rank": rank, "line_thickness": round(width_in, 2),
-                "geometry": LineString([(slo, sl), (elo, el)])
-            })
+
+            # Arrows for directionality (Blue = Out, Pink = In)
+            if out_c > 0:
+                ay, ax = get_arrow_head(sl, slo, el, elo, size_scale=arrow_size)
+                traces_list.append(go.Scattermap(mode="lines", lat=ay, lon=ax, line=dict(width=width, color='#00BFFF'),
+                                                 hoverinfo='skip', showlegend=False))
+
+            if in_c > 0:
+                ay, ax = get_arrow_head(el, elo, sl, slo, size_scale=arrow_size)
+                traces_list.append(go.Scattermap(mode="lines", lat=ay, lon=ax, line=dict(width=width, color='#FF1493'),
+                                                 hoverinfo='skip', showlegend=False))
+
+            # Record GeoJSON feature for OUTBOUND flow
+            if out_c > 0:
+                geojson_features.append({
+                    "name": f"{hub_name} -> {p}",
+                    "type": "flow_out",
+                    "from": hub_name,
+                    "to": p,
+                    "trip_count": out_c,
+                    "rank": rank,
+                    "geometry": LineString([(slo, sl), (elo, el)])  # Hub to Partner
+                })
+
+            # Record GeoJSON feature for INBOUND flow
+            if in_c > 0:
+                geojson_features.append({
+                    "name": f"{p} -> {hub_name}",
+                    "type": "flow_in",
+                    "from": p,
+                    "to": hub_name,
+                    "trip_count": in_c,
+                    "rank": rank,
+                    "geometry": LineString([(elo, el), (slo, sl)])  # Partner to Hub (REVERSED COORDS)
+                })
 
         traces_list.append(go.Scattermap(
             mode="markers+text", lat=[p_lat], lon=[p_lng],
@@ -219,39 +223,56 @@ def generate_standard_map(center_station, file_label, folder_prefix="", top_k=No
         out_c = len(subset[(subset['start_place'] == center_station) & (subset['end_place'] == p)])
         in_c = len(subset[(subset['start_place'] == p) & (subset['end_place'] == center_station)])
 
-        if out_c > 0:
-            width_out = max(1.5, (out_c / max_trips) * 12)
-            arrow_size = 0.0001 + (width_out * 0.000015)
-            (sl, slo), (el, elo) = get_offset_geo(h_lat, h_lng, p_lat, p_lng, 25)
-            traces.append(go.Scattermap(mode="lines", lat=[sl, el], lon=[slo, elo],
-                                        line=dict(width=width_out, color='#00BFFF'), opacity=0.8,
-                                        hoverinfo='text', text=f"OUT: {out_c} -> {p}", showlegend=False))
-            ay, ax = get_arrow_head(sl, slo, el, elo, size_scale=arrow_size)
-            traces.append(
-                go.Scattermap(mode="lines", lat=ay, lon=ax, line=dict(width=width_out, color='#00BFFF'),
-                              hoverinfo='skip',
-                              showlegend=False))
-            geojson_features.append({
-                "origin": center_station, "destination": p, "direction": "OUT", "trip_count": out_c, "rank": rank,
-                "line_thickness": round(width_out, 2), "geometry": LineString([(slo, sl), (elo, el)])
-            })
+        # Exact Coordinates Override
+        sl, slo = h_lat, h_lng
+        el, elo = p_lat, p_lng
 
-        if in_c > 0:
-            width_in = max(1.5, (in_c / max_trips) * 12)
-            arrow_size = 0.0001 + (width_in * 0.000015)
-            (sl, slo), (el, elo) = get_offset_geo(p_lat, p_lng, h_lat, h_lng, 25)
-            traces.append(go.Scattermap(mode="lines", lat=[sl, el], lon=[slo, elo],
-                                        line=dict(width=width_in, color='#FF1493'), opacity=0.8,
-                                        hoverinfo='text', text=f"IN: {in_c} <- {p}", showlegend=False))
-            ay, ax = get_arrow_head(sl, slo, el, elo, size_scale=arrow_size)
-            traces.append(
-                go.Scattermap(mode="lines", lat=ay, lon=ax, line=dict(width=width_in, color='#FF1493'),
-                              hoverinfo='skip',
-                              showlegend=False))
-            geojson_features.append({
-                "origin": p, "destination": center_station, "direction": "IN", "trip_count": in_c, "rank": rank,
-                "line_thickness": round(width_in, 2), "geometry": LineString([(slo, sl), (elo, el)])
-            })
+        total_c = out_c + in_c
+
+        if total_c > 0:
+            width = max(1.5, (total_c / max_trips) * 12)
+            arrow_size = 0.0001 + (width * 0.000015)
+
+            # Base combined line
+            traces.append(go.Scattermap(
+                mode="lines", lat=[sl, el], lon=[slo, elo],
+                line=dict(width=width, color='#AA00FF'), opacity=0.8,
+                hoverinfo='text', text=f"TOTAL: {total_c} | OUT: {out_c} | IN: {in_c}", showlegend=False
+            ))
+
+            if out_c > 0:
+                ay, ax = get_arrow_head(sl, slo, el, elo, size_scale=arrow_size)
+                traces.append(go.Scattermap(mode="lines", lat=ay, lon=ax, line=dict(width=width, color='#00BFFF'),
+                                            hoverinfo='skip', showlegend=False))
+
+            if in_c > 0:
+                ay, ax = get_arrow_head(el, elo, sl, slo, size_scale=arrow_size)
+                traces.append(go.Scattermap(mode="lines", lat=ay, lon=ax, line=dict(width=width, color='#FF1493'),
+                                            hoverinfo='skip', showlegend=False))
+
+            # Record GeoJSON feature for OUTBOUND flow
+            if out_c > 0:
+                geojson_features.append({
+                    "name": f"{center_station} -> {p}",
+                    "type": "flow_out",
+                    "from": center_station,
+                    "to": p,
+                    "trip_count": out_c,
+                    "rank": rank,
+                    "geometry": LineString([(slo, sl), (elo, el)])  # Hub to Partner
+                })
+
+            # Record GeoJSON feature for INBOUND flow
+            if in_c > 0:
+                geojson_features.append({
+                    "name": f"{p} -> {center_station}",
+                    "type": "flow_in",
+                    "from": p,
+                    "to": center_station,
+                    "trip_count": in_c,
+                    "rank": rank,
+                    "geometry": LineString([(elo, el), (slo, sl)])  # Partner to Hub (REVERSED COORDS)
+                })
 
         traces.append(
             go.Scattermap(mode="markers+text", lat=[p_lat], lon=[p_lng], marker=dict(size=6, color='white'),
@@ -292,13 +313,29 @@ def generate_standard_map(center_station, file_label, folder_prefix="", top_k=No
 # ==========================================
 def generate_brno_combined_separate_nodes(top_k=None):
     suffix = "Top10" if top_k else "All"
-    title_suffix = "(Top 10 Each)" if top_k else "(All Connections)"
+    title_suffix = "(Top 10 Global Partners)" if top_k else "(All Connections)"
     print(f"--- Generating Map: Brno Combined Separate Nodes {title_suffix} ---")
 
     fig = go.Figure()
     all_traces = []
     lats, lngs = [], []
     geojson_features = []
+
+    # Calculate global top partners across ALL 3 Brno stations combined
+    combined_subset = all_trips[
+        all_trips['start_place'].isin(BRNO_STATIONS) | all_trips['end_place'].isin(BRNO_STATIONS)]
+
+    # Extract all partners (destinations when starting in Brno, or origins when ending in Brno)
+    partner_series = pd.concat([
+        combined_subset.loc[combined_subset['start_place'].isin(BRNO_STATIONS), 'end_place'],
+        combined_subset.loc[combined_subset['end_place'].isin(BRNO_STATIONS), 'start_place']
+    ])
+
+    # Exclude internal trips between the 3 hubs to find pure external partners
+    partner_counts = partner_series[~partner_series.isin(BRNO_STATIONS)].value_counts()
+
+    global_valid_partners = partner_counts.head(top_k).index.tolist() if top_k else partner_counts.index.tolist()
+    global_max_trips = partner_counts.max() if not partner_counts.empty else 1
 
     for hub in BRNO_STATIONS:
         try:
@@ -313,7 +350,9 @@ def generate_brno_combined_separate_nodes(top_k=None):
         subset['partner'] = subset.apply(lambda x: x['end_place'] if x['start_place'] == hub else x['start_place'],
                                          axis=1)
 
-        add_traces_to_fig(fig, hub, subset, h_lat, h_lng, all_traces, geojson_features, top_k)
+        # Pass the global top 10 list into the drawing function so it filters correctly
+        add_traces_to_fig(fig, hub, subset, h_lat, h_lng, all_traces, geojson_features, top_k, global_valid_partners,
+                          global_max_trips)
 
         all_traces.append(go.Scattermap(
             mode="markers+text", lat=[h_lat], lon=[h_lng],
@@ -397,39 +436,56 @@ def generate_standard_map_clustered_logic(dataframe, center_name, h_lat, h_lng, 
         out_c = len(subset[(subset['start_place'] == center_name) & (subset['end_place'] == p)])
         in_c = len(subset[(subset['start_place'] == p) & (subset['end_place'] == center_name)])
 
-        if out_c > 0:
-            width_out = max(1.5, (out_c / max_trips) * 12)
-            arrow_size = 0.0001 + (width_out * 0.000015)
-            (sl, slo), (el, elo) = get_offset_geo(h_lat, h_lng, p_lat, p_lng, 25)
-            traces.append(go.Scattermap(mode="lines", lat=[sl, el], lon=[slo, elo],
-                                        line=dict(width=width_out, color='#00BFFF'), opacity=0.8,
-                                        hoverinfo='text', text=f"OUT: {out_c} -> {p}", showlegend=False))
-            ay, ax = get_arrow_head(sl, slo, el, elo, size_scale=arrow_size)
-            traces.append(
-                go.Scattermap(mode="lines", lat=ay, lon=ax, line=dict(width=width_out, color='#00BFFF'),
-                              hoverinfo='skip',
-                              showlegend=False))
-            geojson_features.append({
-                "origin": center_name, "destination": p, "direction": "OUT", "trip_count": out_c, "rank": rank,
-                "line_thickness": round(width_out, 2), "geometry": LineString([(slo, sl), (elo, el)])
-            })
+        # Exact Coordinates Override
+        sl, slo = h_lat, h_lng
+        el, elo = p_lat, p_lng
 
-        if in_c > 0:
-            width_in = max(1.5, (in_c / max_trips) * 12)
-            arrow_size = 0.0001 + (width_in * 0.000015)
-            (sl, slo), (el, elo) = get_offset_geo(p_lat, p_lng, h_lat, h_lng, 25)
-            traces.append(go.Scattermap(mode="lines", lat=[sl, el], lon=[slo, elo],
-                                        line=dict(width=width_in, color='#FF1493'), opacity=0.8,
-                                        hoverinfo='text', text=f"IN: {in_c} <- {p}", showlegend=False))
-            ay, ax = get_arrow_head(sl, slo, el, elo, size_scale=arrow_size)
-            traces.append(
-                go.Scattermap(mode="lines", lat=ay, lon=ax, line=dict(width=width_in, color='#FF1493'),
-                              hoverinfo='skip',
-                              showlegend=False))
-            geojson_features.append({
-                "origin": p, "destination": center_name, "direction": "IN", "trip_count": in_c, "rank": rank,
-                "line_thickness": round(width_in, 2), "geometry": LineString([(slo, sl), (elo, el)])
-            })
+        total_c = out_c + in_c
+
+        if total_c > 0:
+            width = max(1.5, (total_c / max_trips) * 12)
+            arrow_size = 0.0001 + (width * 0.000015)
+
+            # Base combined line
+            traces.append(go.Scattermap(
+                mode="lines", lat=[sl, el], lon=[slo, elo],
+                line=dict(width=width, color='#AA00FF'), opacity=0.8,
+                hoverinfo='text', text=f"TOTAL: {total_c} | OUT: {out_c} | IN: {in_c}", showlegend=False
+            ))
+
+            if out_c > 0:
+                ay, ax = get_arrow_head(sl, slo, el, elo, size_scale=arrow_size)
+                traces.append(go.Scattermap(mode="lines", lat=ay, lon=ax, line=dict(width=width, color='#00BFFF'),
+                                            hoverinfo='skip', showlegend=False))
+
+            if in_c > 0:
+                ay, ax = get_arrow_head(el, elo, sl, slo, size_scale=arrow_size)
+                traces.append(go.Scattermap(mode="lines", lat=ay, lon=ax, line=dict(width=width, color='#FF1493'),
+                                            hoverinfo='skip', showlegend=False))
+
+            # Record GeoJSON feature for OUTBOUND flow
+            if out_c > 0:
+                geojson_features.append({
+                    "name": f"{center_name} -> {p}",
+                    "type": "flow_out",
+                    "from": center_name,
+                    "to": p,
+                    "trip_count": out_c,
+                    "rank": rank,
+                    "geometry": LineString([(slo, sl), (elo, el)])  # Hub to Partner
+                })
+
+            # Record GeoJSON feature for INBOUND flow
+            if in_c > 0:
+                geojson_features.append({
+                    "name": f"{p} -> {center_name}",
+                    "type": "flow_in",
+                    "from": p,
+                    "to": center_name,
+                    "trip_count": in_c,
+                    "rank": rank,
+                    "geometry": LineString([(elo, el), (slo, sl)])  # Partner to Hub (REVERSED COORDS)
+                })
 
         traces.append(
             go.Scattermap(mode="markers+text", lat=[p_lat], lon=[p_lng], marker=dict(size=6, color='white'),
